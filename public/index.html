@@ -130,7 +130,8 @@ body{background:#08080f;color:#d8d0c4;font-family:'Noto Serif SC',serif;overflow
 .info-bar{display:flex;align-items:center;gap:8px;font-size:10px;flex-wrap:wrap;justify-content:center}
 .player-ind{display:flex;align-items:center;gap:4px;padding:3px 9px;border-radius:10px;
   border:1px solid transparent;transition:all .4s}
-.player-ind.active{border-color:rgba(255,255,255,.15);background:rgba(255,255,255,.05)}
+.player-ind.active{border-color:rgba(255,255,255,.2);background:rgba(255,255,255,.08);animation:turnPulse 2s ease-in-out infinite}
+@keyframes turnPulse{0%,100%{box-shadow:0 0 4px rgba(255,255,255,.1)}50%{box-shadow:0 0 12px rgba(255,255,255,.25)}}
 .player-ind.me{box-shadow:inset 0 0 0 1px rgba(255,255,255,.06)}
 .dot{width:9px;height:9px;border-radius:50%}
 .dot.c1{background:radial-gradient(circle at 35% 35%,#fff8e7,#ffd89b,#c9963a);box-shadow:0 0 4px rgba(255,216,155,.4)}
@@ -196,7 +197,7 @@ body{background:#08080f;color:#d8d0c4;font-family:'Noto Serif SC',serif;overflow
   background:rgba(255,80,80,.1);color:#ff7766;cursor:pointer;font-family:inherit;font-size:11px;
   animation:iPulse .5s ease-in-out infinite}
 .intercept-timer{width:100px;height:3px;border-radius:2px;background:rgba(255,255,255,.06);margin:6px auto 0;overflow:hidden}
-.intercept-timer-fill{height:100%;background:#ff7766;border-radius:2px;transition:width 1.2s linear}
+.intercept-timer-fill{height:100%;background:#ff7766;border-radius:2px;transition:width 1.5s linear}
 
 .undo-banner{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:25;
   padding:14px 24px;border-radius:12px;text-align:center;
@@ -841,7 +842,7 @@ function showInterceptBanner(){
   c.innerHTML=`<div class="intercept-banner"><h3>飞沙走石</h3><p>是否使用「擒拿」打断？</p>
     <button class="intercept-btn" onclick="triggerIntercept()">擒拿打断</button>
     <div class="intercept-timer"><div class="intercept-timer-fill" id="intercept-fill" style="width:100%"></div></div></div>`;
-  requestAnimationFrame(()=>{const f=document.getElementById('intercept-fill');if(f){f.style.transition='width 1.2s linear';requestAnimationFrame(()=>{if(f)f.style.width='0%'})}});
+  requestAnimationFrame(()=>{const f=document.getElementById('intercept-fill');if(f){f.style.transition='width 1.5s linear';requestAnimationFrame(()=>{if(f)f.style.width='0%'})}});
 }
 function removeInterceptBanner(){document.getElementById('intercept-container').innerHTML=''}
 
@@ -906,9 +907,7 @@ function buildSidePanel(){
     const disabled=!isMyTurn||(sid==='move'&&skInfo>0)||(sid==='mountain'&&s.totalMoves<50);
     let btnHtml='';
 
-    if(sid==='sandstorm'){
-      btnHtml=`<button class="skill-btn s_sandstorm" onclick="enterSandstormMode()" ${disabled?'disabled':''}>选择目标</button>`;
-    }else if(sid==='stillwater'){
+    if(sid==='stillwater'){
       btnHtml=`<select id="stillwater-target" style="width:100%;padding:2px;border-radius:3px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.03);color:#d8d0c4;font-size:9px;margin-top:3px">`;
       for(const p of getRoles()){if(p===myRole)continue;btnHtml+=`<option value="${p}">${esc(names[p]||'?')}</option>`;}
       btnHtml+=`</select><button class="skill-btn s_stillwater" onclick="useStillwater()" ${disabled?'disabled':''}>施放</button>`;
@@ -920,8 +919,27 @@ function buildSidePanel(){
     }else if(sid==='swap'){
       btnHtml=`<button class="skill-btn s_swap" onclick="enterSwapMode()" ${disabled?'disabled':''}>选择敌方棋子</button>`;
     }else if(sid==='move'){
-      if(skInfo>0) btnHtml=`<span class="cooldown">冷却 ${skInfo} 回合</span>`;
+      if(skInfo>0) btnHtml=`<div style="display:flex;align-items:center;gap:4px;margin-top:2px">
+        <div style="flex:1;height:4px;border-radius:2px;background:rgba(255,255,255,.08);overflow:hidden">
+          <div style="width:${(5-skInfo)/5*100}%;height:100%;background:#66ccff;border-radius:2px"></div>
+        </div>
+        <span style="font-size:8px;opacity:.4">${skInfo}</span>
+      </div>`;
       else btnHtml=`<button class="skill-btn s_move" onclick="enterMoveMode()" ${disabled?'disabled':''}>选择棋子</button>`;
+    }else if(sid==='sandstorm'){
+      // 飞沙走石冷却显示（5回合冷却）
+      const lastUsed = snap.sandstormLastUsed && snap.sandstormLastUsed[myRole] || 0;
+      const cooldownLeft = Math.max(0, 5 - (snap.totalMoves - lastUsed));
+      if(cooldownLeft > 0) {
+        btnHtml=`<div style="display:flex;align-items:center;gap:4px;margin-top:2px">
+          <div style="flex:1;height:4px;border-radius:2px;background:rgba(255,255,255,.08);overflow:hidden">
+            <div style="width:${(5-cooldownLeft)/5*100}%;height:100%;background:#ffaa55;border-radius:2px"></div>
+          </div>
+          <span style="font-size:8px;opacity:.4">${cooldownLeft}</span>
+        </div>`;
+      } else {
+        btnHtml=`<button class="skill-btn s_sandstorm" onclick="enterSandstormMode()" ${disabled?'disabled':''}>选择目标</button>`;
+      }
     }else if(sid==='impervious'){
       btnHtml=`<span style="font-size:9px;opacity:.4">被动 — 己方棋子免疫技能</span>`;
     }else if(sid==='ambush'){
@@ -1028,6 +1046,11 @@ bCvs.addEventListener('click',e=>{handleBoardClick(getGridPos(e))});
 bCvs.addEventListener('touchstart',e=>{
   e.preventDefault();
   const pos=getGridPos(e.touches[0]);
+  // 添加触摸反馈涟漪
+  if(pos && hoverPos){
+    const tx=pad+pos.c*cellSize,ty=pad+pos.r*cellSize;
+    ripples.push({x:tx,y:ty,radius:cellSize*.1,alpha:.3,color:'150,150,150',fade:.02});
+  }
   handleBoardClick(pos);
 },{passive:false});
 
@@ -1175,7 +1198,7 @@ function drawBoard(t){
   if(winCells&&winCells.length>=2){const f=winCells[0],l=winCells[winCells.length-1];const x1=pad+f[1]*cellSize,y1=pad+f[0]*cellSize,x2=pad+l[1]*cellSize,y2=pad+l[0]*cellSize;const wc=PC[board[winCells[0][0]][winCells[0][1]]];const lg=bCtx.createLinearGradient(x1,y1,x2,y2);lg.addColorStop(0,`rgba(${wc},0)`);lg.addColorStop(.5,`rgba(${wc},0.7)`);lg.addColorStop(1,`rgba(${wc},0)`);bCtx.strokeStyle=lg;bCtx.lineWidth=3;bCtx.shadowColor=`rgb(${wc})`;bCtx.shadowBlur=18;bCtx.beginPath();bCtx.moveTo(x1,y1);bCtx.lineTo(x2,y2);bCtx.stroke();bCtx.shadowBlur=0;}
 
   // Ripples & particles
-  for(let i=ripples.length-1;i>=0;i--){const rp=ripples[i];rp.radius+=1;rp.alpha-=.01;if(rp.alpha<=0){ripples.splice(i,1);continue;}bCtx.beginPath();bCtx.arc(rp.x,rp.y,rp.radius,0,Math.PI*2);bCtx.strokeStyle=`rgba(${rp.color},${rp.alpha})`;bCtx.lineWidth=1;bCtx.stroke();}
+  for(let i=ripples.length-1;i>=0;i--){const rp=ripples[i];rp.radius+=1;rp.alpha-=rp.fade||.01;if(rp.alpha<=0){ripples.splice(i,1);continue;}bCtx.beginPath();bCtx.arc(rp.x,rp.y,rp.radius,0,Math.PI*2);bCtx.strokeStyle=`rgba(${rp.color},${rp.alpha})`;bCtx.lineWidth=1;bCtx.stroke();}
   for(let i=particles.length-1;i>=0;i--){const p=particles[i];p.x+=p.vx;p.y+=p.vy;p.vy+=.015;p.life-=.01;if(p.life<=0){particles.splice(i,1);continue;}bCtx.beginPath();bCtx.arc(p.x,p.y,p.r*p.life,0,Math.PI*2);bCtx.fillStyle=`rgba(${p.color},${p.life*.7})`;bCtx.fill();}
 }
 

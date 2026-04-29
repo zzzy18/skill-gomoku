@@ -814,7 +814,7 @@ function handleSkill(room, msg, player) {
     room.sandstormLastUsed[player] = room.totalMoves; // 记录使用回合
     room.pendingSkill={type:'sandstorm',player,r,c};
     broadcastAll(room,{type:'skillPending',skill:'sandstorm',player,r,c});
-    room.pendingTimer=setTimeout(()=>{if(room.pendingSkill&&room.pendingSkill.type==='sandstorm')resolveSandstorm(room);},1200);
+    room.pendingTimer=setTimeout(()=>{if(room.pendingSkill&&room.pendingSkill.type==='sandstorm')resolveSandstorm(room);},1500);
     return {ok:true,action:'skill',skill:'sandstorm',pending:true,player};
   }
 

@@ -565,64 +565,67 @@ function shouldUseSkill(room, aiRole, difficulty) {
   // 如果能直接赢或防住，优先落子
   if (bestPlaceScore >= SCORE.LIVE4) return null;
 
-  // 中等/困难：主动使用技能（但技能价值必须高于落子价值）
+  // 中等/困难：主动使用技能
   if (difficulty === 'medium' || difficulty === 'hard') {
-    // 飞沙走石：移除高威胁敌方棋子
+    // 飞沙走石：移除高威胁敌方棋子（降低阈值，更积极使用）
     if (equipped.includes('sandstorm')) {
       const lastUsed = room.sandstormLastUsed[aiRole] || 0;
       if (room.totalMoves - lastUsed >= 5) {
         const target = aiSandstorm(room, aiRole, humanRole);
         if (target) {
           const threatValue = scorePosition(board, target[0], target[1], humanRole);
-          // 只移除比当前最佳落子更有价值的威胁
-          if (threatValue >= bestPlaceScore * 1.5 && threatValue >= SCORE.RUSH4) {
+          // 降低阈值：移除LIVE3及以上威胁，或比落子价值高的威胁
+          if (threatValue >= SCORE.LIVE3 || (threatValue >= bestPlaceScore * 0.6 && threatValue >= SCORE.SLEEP3)) {
             return { action: 'skill', skill: 'sandstorm', r: target[0], c: target[1] };
           }
         }
       }
     }
 
-    // 偷梁换柱：转化关键敌方棋子（只转化形成活四的）
+    // 偷梁换柱：转化关键敌方棋子（降低阈值至LIVE3）
     if (equipped.includes('swap')) {
       const target = aiSwap(room, aiRole, humanRole);
       if (target) {
         const humanValue = scorePosition(board, target[0], target[1], humanRole);
-        if (humanValue >= SCORE.LIVE4) {
+        // 降低阈值：转化活三或冲四的棋子
+        if (humanValue >= SCORE.LIVE3) {
           return { action: 'skill', skill: 'swap', r: target[0], c: target[1] };
         }
       }
     }
 
-    // 静如止水：对手有冲四威胁时跳过
+    // 静如止水：对手有活三或冲四威胁时跳过
     if (equipped.includes('stillwater')) {
-      let hasRush4 = false;
-      for (let r = 0; r < N && !hasRush4; r++) {
-        for (let c = 0; c < N && !hasRush4; c++) {
+      let hasThreat = false;
+      for (let r = 0; r < N && !hasThreat; r++) {
+        for (let c = 0; c < N && !hasThreat; c++) {
           if (board[r][c] === humanRole) {
             for (const [dr, dc] of DIRS) {
               const { count, block } = analyzeDirection(board, r, c, dr, dc, humanRole);
-              if (count >= 4 && block <= 1) { hasRush4 = true; break; }
+              // 扩展威胁判定：活三(block=0)或冲四(block<=1,count>=4)
+              if ((count >= 3 && block === 0) || (count >= 4 && block <= 1)) { hasThreat = true; break; }
             }
           }
         }
       }
-      if (hasRush4) {
+      if (hasThreat) {
         const target = aiStillwater(room, aiRole);
         if (target) return { action: 'skill', skill: 'stillwater', target };
       }
     }
 
-    // 斗转星移：有重大改进时使用
+    // 斗转星移：有重大改进时使用（降低阈值）
     if (equipped.includes('move') && (ss.move || 0) <= 0) {
       const moveResult = aiMove(room, aiRole, humanRole);
-      if (moveResult && moveResult.improvement > SCORE.LIVE4) {
+      if (moveResult && moveResult.improvement >= SCORE.LIVE3) {
         return { action: 'skill', skill: 'move', fr: moveResult.fr, fc: moveResult.fc, tr: moveResult.tr, tc: moveResult.tc };
       }
     }
 
-    // 暗度陈仓：中后期使用，创造双杀
+    // 暗度陈仓：中后期有一定概率使用（增加使用概率）
     if (equipped.includes('ambush') && !room.ambushUsed.has(aiRole)) {
-      if (room.totalMoves > 25 && Math.random() < 0.3) {
+      // 20回合后有40%概率使用，创造双杀机会
+      if (room.totalMoves > 15 && Math.random() < 0.4) {
         const ambushPlan = aiAmbush(room, aiRole, humanRole);
         if (ambushPlan) {
           return { action: 'skill', skill: 'ambush', fakePos: ambushPlan.fakePos, realPos: ambushPlan.realPos };
@@ -631,16 +634,20 @@ function shouldUseSkill(room, aiRole, difficulty) {
     }
   }
 
-  // 简单模式：只在被四连威胁时用飞沙走石
+  // 简单模式：降低了技能使用阈值
   if (difficulty === 'simple') {
     if (equipped.includes('sandstorm')) {
       const lastUsed = room.sandstormLastUsed[aiRole] || 0;
       if (room.totalMoves - lastUsed >= 5) {
         const target = aiSandstorm(room, aiRole, humanRole);
-        if (target && scorePosition(board, target[0], target[1], humanRole) >= SCORE.LIVE4) {
+        if (target && scorePosition(board, target[0], target[1], humanRole) >= SCORE.LIVE3) {
           return { action: 'skill', skill: 'sandstorm', r: target[0], c: target[1] };
         }
       }
+    }
+    // 简单模式也会用力拔山兮
+    if (equipped.includes('mountain') && room.totalMoves >= 50) {
+      return { action: 'skill', skill: 'mountain' };
     }
   }
 
