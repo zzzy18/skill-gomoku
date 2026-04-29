@@ -227,6 +227,9 @@ body{background:#08080f;color:#d8d0c4;font-family:'Noto Serif SC',serif;overflow
 
 @keyframes fadeUp{from{transform:translateY(12px);opacity:0}to{transform:translateY(0);opacity:1}}
 
+.thinking-dots{animation:thinkDots 1.2s steps(3) infinite}
+@keyframes thinkDots{0%{content:''}33%{content:'.'}66%{content:'..'}100%{content:'...'}}
+
 /* ══════ Mobile ══════ */
 @media(max-width:860px){
   .lobby-box h1{font-size:26px;letter-spacing:6px}
@@ -295,6 +298,16 @@ body{background:#08080f;color:#d8d0c4;font-family:'Noto Serif SC',serif;overflow
     <div class="mode-select">
       <div class="mode-btn selected" data-mode="2" onclick="selectMode(2)" ontouchend="event.preventDefault();selectMode(2)"><span class="num">2</span><span class="label">人对战</span></div>
       <div class="mode-btn" data-mode="3" onclick="selectMode(3)" ontouchend="event.preventDefault();selectMode(3)"><span class="num">3</span><span class="label">人对战</span></div>
+      <div class="mode-btn" data-mode="ai" onclick="selectMode('ai')" ontouchend="event.preventDefault();selectMode('ai')" style="width:140px"><span class="num" style="font-size:20px">&#x1F916;</span><span class="label">人机对战</span></div>
+    </div>
+    <!-- AI difficulty selection -->
+    <div id="ai-difficulty" style="display:none;margin-bottom:16px">
+      <div style="font-size:11px;opacity:.4;margin-bottom:6px;letter-spacing:2px">选择难度</div>
+      <div style="display:flex;gap:8px;justify-content:center">
+        <div class="mode-btn ai-diff selected" data-diff="simple" onclick="selectAIDiff('simple')" ontouchend="event.preventDefault();selectAIDiff('simple')" style="width:80px;padding:10px 6px"><span class="num" style="font-size:16px">&#9734;</span><span class="label">初学</span></div>
+        <div class="mode-btn ai-diff" data-diff="medium" onclick="selectAIDiff('medium')" ontouchend="event.preventDefault();selectAIDiff('medium')" style="width:80px;padding:10px 6px"><span class="num" style="font-size:16px">&#9733;</span><span class="label">进阶</span></div>
+        <div class="mode-btn ai-diff" data-diff="hard" onclick="selectAIDiff('hard')" ontouchend="event.preventDefault();selectAIDiff('hard')" style="width:80px;padding:10px 6px"><span class="num" style="font-size:16px">&#9876;</span><span class="label">宗师</span></div>
+      </div>
     </div>
     <input class="name-input" id="my-name" placeholder="你的名称" maxlength="8">
     <div class="lobby-actions">
@@ -332,6 +345,13 @@ body{background:#08080f;color:#d8d0c4;font-family:'Noto Serif SC',serif;overflow
     </div>
     <div class="side-panel" id="side-panel"></div>
   </div>
+</div>
+
+<!-- AI Thinking -->
+<div id="ai-thinking" style="display:none;position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:55;
+  padding:6px 18px;border-radius:10px;background:rgba(12,12,22,.9);border:1px solid rgba(122,95,255,.25);
+  font-size:11px;letter-spacing:2px;opacity:.8;pointer-events:none">
+  <span style="color:#7a5fff">AI &#x1F9E0;</span> 思考中<span class="thinking-dots">...</span>
 </div>
 
 <!-- Overlay -->
@@ -376,13 +396,35 @@ let selectedSkills=[]; // during selection in room
 let lastRoomUpdate=null; // cache last room state for UI rebuild
 let hoverPos=null,ripples=[],particles=[],winGlow=0;
 let sandstormMode=false,swapMode=false,moveFromMode=false,moveFrom=null;
+let aiMode=false,aiDifficulty='medium'; // 人机对战模式
 
 // ═══════════════════════════════════════
 //  Lobby
 // ═══════════════════════════════════════
-function selectMode(m){gameMode=m;document.querySelectorAll('.mode-btn').forEach(b=>b.classList.toggle('selected',parseInt(b.dataset.mode)===m))}
+function selectMode(m){
+  if(m==='ai'){
+    gameMode=2;aiMode=true;
+    document.getElementById('ai-difficulty').style.display='block';
+  }else{
+    gameMode=m;aiMode=false;
+    document.getElementById('ai-difficulty').style.display='none';
+  }
+  document.querySelectorAll('.mode-btn:not(.ai-diff)').forEach(b=>b.classList.toggle('selected',b.dataset.mode===(aiMode?'ai':m)));
+}
+function selectAIDiff(d){
+  aiDifficulty=d;
+  document.querySelectorAll('.ai-diff').forEach(b=>b.classList.toggle('selected',b.dataset.diff===d));
+}
 function getMyName(){return document.getElementById('my-name').value.trim()||DEFAULT_NAMES[P1]}
-function createRoom(){if(!ws||ws.readyState!==1){notify('未连接','error');return;}const n=getMyName();const initNames={...DEFAULT_NAMES};initNames[P1]=n;send({type:'create',mode:gameMode,names:initNames})}
+function createRoom(){
+  if(!ws||ws.readyState!==1){notify('未连接','error');return;}
+  const n=getMyName();const initNames={...DEFAULT_NAMES};initNames[P1]=n;
+  if(aiMode){
+    send({type:'create',mode:2,names:initNames,aiMode:true,aiDifficulty});
+  }else{
+    send({type:'create',mode:gameMode,names:initNames});
+  }
+}
 function joinRoom(){const code=document.getElementById('join-code').value.trim().toUpperCase();if(code.length!==5){notify('请输入5位房间号','error');return;}send({type:'join',roomId:code,name:getMyName()})}
 function copyCode(){
   if(!roomId){notify('无房间号','error');return;}
@@ -416,7 +458,14 @@ function fallbackCopy(text){
   }
   document.body.removeChild(ta);
 }
-function leaveRoom(){if(ws)ws.close();myRole=null;roomId=null;snap=null;showScreen('lobby')}
+function leaveRoom(){if(ws)ws.close();myRole=null;roomId=null;snap=null;aiMode=false;showScreen('lobby')}
+function updateAIThinking(){
+  const el=document.getElementById('ai-thinking');
+  if(!el||!aiMode||!snap)return;
+  const aiRole=getRoles().find(r=>r!==myRole);
+  const isAITurn=snap.currentPlayer===aiRole&&!snap.gameOver;
+  el.style.display=isAITurn?'block':'none';
+}
 document.getElementById('join-code').addEventListener('keydown',e=>{if(e.key==='Enter')joinRoom()});
 // iOS 键盘弹出时滚动输入框到可视区域
 // iOS 键盘弹出处理 - 使用 visualViewport 动态调整布局
@@ -475,6 +524,7 @@ function handleMsg(m){
     case 'joined':
       myRole=m.role;roomId=m.roomId;isCreator=m.playerIndex===0;
       gameMode=m.mode||2;names={...DEFAULT_NAMES,...(m.names||{})};
+      aiMode=m.aiMode||false;aiDifficulty=m.aiDifficulty||'medium';
       selectedSkills=[];myEquipped=[];
       document.getElementById('room-code-display');// just ensure room screen renders
       if(!isCreator)selectedSkills=[]; // reset for new room
@@ -482,15 +532,18 @@ function handleMsg(m){
       break;
     case 'roomUpdate':
       names={...DEFAULT_NAMES,...(m.names||{})};gameMode=m.mode||2;
+      if(m.aiMode)aiMode=true;
       // Update equipped display
       if(m.equipped&&m.equipped[myRole]) myEquipped=m.equipped[myRole];
       buildRoomUI(m);
       break;
     case 'gameStart':
       snap=m.snapshot;names={...DEFAULT_NAMES,...(m.names||{})};gameMode=m.mode||2;
+      aiMode=m.aiMode||false;
       myEquipped=(snap.equipped&&snap.equipped[myRole])||[];
       showScreen('game');notify('对弈开始！','info');
       addSystemChat('对弈开始！');
+      updateAIThinking();
       break;
     case 'update':case 'skill':case 'nova':
       if(m.snapshot){
@@ -528,6 +581,7 @@ function handleMsg(m){
           }
         }
         updateGameUI(); // 强制刷新UI，更新回合指示器
+        updateAIThinking();
       }
       break;
     case 'ambushFake':
@@ -570,6 +624,7 @@ function handleMsg(m){
       document.getElementById('overlay').classList.remove('show');
       document.getElementById('nova-btn').style.display='none';
       notify('新一局开始','info');addSystemChat('新一局开始');
+      updateAIThinking();
       break;
     case 'playerLeft':if(m.snapshot)snap=m.snapshot;notify(`${names[m.role]||'?'}已离开`,'info');break;
     case 'restartRequested':notify('对手请求重新开始','info');break;
@@ -602,7 +657,7 @@ function handleMsg(m){
       break;
     case 'error':notify(m.message||'错误','error');break;
   }
-  if(snap&&document.getElementById('game').classList.contains('show'))updateGameUI();
+  if(snap&&document.getElementById('game').classList.contains('show')){updateGameUI();updateAIThinking();}
 }
 
 // ═══════════════════════════════════════
@@ -612,33 +667,43 @@ function buildRoomUI(m){
   lastRoomUpdate=m; // 缓存房间状态
   const count=gameMode;const roles=count===3?[P1,P2,P3]:[P1,P2];
   const equipped=m.equipped||{};
-  // 使用本地 selectedSkills 判断选中状态（而不是服务器返回的）
   const mySelectedSkills=selectedSkills.length>0?selectedSkills:(equipped[myRole]||[]);
 
-  let html=`<h2>战前准备</h2>
-    <div class="room-code-area">
+  let html=`<h2>战前准备</h2>`;
+
+  // AI房间不需要分享房间号
+  if(!aiMode){
+    html+=`<div class="room-code-area">
       <div class="code" id="room-code-display">${roomId||'-----'}</div>
       <div class="hint">将房间号告知对手</div>
       <button class="copy-btn" onclick="copyCode()">复制</button>
     </div>`;
+  }else{
+    const diffLabel=aiDifficulty==='simple'?'初学':aiDifficulty==='medium'?'进阶':'宗师';
+    html+=`<div class="room-code-area">
+      <div class="code" style="font-size:16px;letter-spacing:3px">&#x1F916; 人机对战 · ${diffLabel}</div>
+    </div>`;
+  }
 
   // Players
   html+=`<div class="players-row">`;
   for(let i=0;i<count;i++){
     const role=roles[i];const css=PSCSS[role];const filled=m.players[i];const nm=names[role]||DEFAULT_NAMES[role];
-    const eq=equipped[role]||[];const eqStr=eq.length?eq.map(s=>ALL_SKILLS.find(a=>a.id===s)?.name||s).join(' + '):'未选择';
+    const eq=equipped[role]||[];
+    const eqStr=eq.length?eq.map(s=>ALL_SKILLS.find(a=>a.id===s)?.name||s).join(' + '):'未选择';
+    const isAIPlayer=aiMode&&i===1;
     html+=`<div class="player-slot ${css} ${filled?'filled':'pc-empty'}">
       <div class="icon"></div>
-      <div class="name-label">${esc(nm)}</div>
+      <div class="name-label">${esc(nm)}${isAIPlayer?' <span style="font-size:9px;opacity:.4">&#x1F916;</span>':''}</div>
       <div class="wait">${filled?'已加入':'等待...'}</div>
-      <div class="equipped-label">${eqStr}</div>
+      <div class="equipped-label">${isAIPlayer?'自动选择':eqStr}</div>
     </div>`;
   }
   html+=`</div>`;
 
-  // Skill selection — only for my role
+  // Skill selection — only for human player (AI auto-selects)
   html+=`<div class="skill-select-section">
-    <h3>选择技能 (选2个)</h3>
+    <h3>${aiMode?'选择你的技能':'选择技能'} (选2个)</h3>
     <div class="skill-grid">`;
   for(const sk of ALL_SKILLS){
     const isSel=mySelectedSkills.includes(sk.id);
@@ -664,9 +729,8 @@ function buildRoomUI(m){
   // Start
   const allJoined=m.players.slice(0,count).every(Boolean);
   const allEquipped=roles.every(r=>(equipped[r]&&equipped[r].length>=2));
-  const btn=document.getElementById('start-btn');
   const canStart=allJoined&&allEquipped;
-  html+=`<button class="start-btn" onclick="startGame()" ${canStart&&isCreator?'':'disabled'}>${!allJoined?'等待玩家加入...':!allEquipped?'等待所有人选择2个技能...':isCreator?'开始对弈':'等待创建者开始...'}</button>`;
+  html+=`<button class="start-btn" onclick="startGame()" ${canStart&&isCreator?'':'disabled'}>${!allJoined?'等待玩家加入...':!allEquipped?(aiMode?'请选择2个技能...':'等待所有人选择2个技能...'):isCreator?'开始对弈':'等待创建者开始...'}</button>`;
 
   document.getElementById('room-box').innerHTML=html;
 }
@@ -746,7 +810,8 @@ function updateGameUI(){
   for(const r of getRoles()){
     const css=PCSS[r];const act=snap.currentPlayer===r&&!snap.gameOver?'active':'';
     const me=r===myRole?'me':'';
-    h+=`<div class="player-ind ${css} ${act} ${me}"><div class="dot ${css}"></div><span>${esc(names[r]||'?')}</span><span class="score-text">${snap.scores[r]||0}</span></div>`;
+    const aiLabel=aiMode&&r!==myRole?' <span style="font-size:8px;opacity:.35">&#x1F916;</span>':'';
+    h+=`<div class="player-ind ${css} ${act} ${me}"><div class="dot ${css}"></div><span>${esc(names[r]||'?')}${aiLabel}</span><span class="score-text">${snap.scores[r]||0}</span></div>`;
   }
   bar.innerHTML=h;
   document.getElementById('move-count').textContent=`第 ${snap.totalMoves} 手`;
@@ -758,6 +823,7 @@ function updateGameUI(){
 
   // Win
   if(snap.gameOver&&!document.getElementById('overlay').classList.contains('show')){
+    updateAIThinking(); // hide thinking on game over
     let winner=null,sub='';
     if(snap.winCells&&snap.winCells.length>0){
       winner=snap.board[snap.winCells[0][0]][snap.winCells[0][1]];

@@ -2,6 +2,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const WebSocket = require('ws');
+const { getAIMove, aiAmbush } = require('./ai-engine');
 
 const PORT = process.env.PORT || 3000;
 
@@ -37,6 +38,278 @@ const ALL_SKILLS = [
 
 const rooms = new Map();
 const playerRoom = new Map();
+
+// ── AI 伪连接 ──
+class AIConnection {
+  constructor(roomId, difficulty) {
+    this.readyState = 1; // OPEN
+    this.isAlive = true;
+    this._roomId = roomId;
+    this._difficulty = difficulty;
+    this._isAI = true;
+  }
+  send(data) {
+    let msg;
+    try { msg = JSON.parse(data); } catch { return; }
+    processAIMessage(this._roomId, msg, this._difficulty);
+  }
+  ping() { this.isAlive = true; }
+  terminate() {}
+}
+
+function processAIMessage(roomId, msg, difficulty) {
+  const room = rooms.get(roomId);
+  if (!room || room.gameOver) return;
+
+  // 在AI回合时触发AI行动
+  const aiIdx = room.players.findIndex(p => p && p._isAI);
+  if (aiIdx < 0) return;
+  const aiRole = room.roles[aiIdx];
+
+  if (msg.type === 'update' || msg.type === 'skill' || msg.type === 'restarted' || msg.type === 'skillApplied' || msg.type === 'intercept') {
+    if (msg.snapshot) {
+      // 更新房间状态（snapshot已经由主逻辑维护了，这里只需检查是否轮到AI）
+    }
+    if (room.currentPlayer === aiRole && !room.gameOver && !room.pendingSkill && !room.ambushState) {
+      scheduleAIMove(roomId, difficulty);
+    }
+  }
+  if (msg.type === 'gameStart') {
+    if (room.currentPlayer === aiRole && !room.gameOver) {
+      scheduleAIMove(roomId, difficulty);
+    }
+  }
+  if (msg.type === 'ambushFake' && msg.player === aiRole) {
+    // AI暗度陈仓：假棋子已落，接下来自动下真棋子
+    // ambushState已设为real阶段
+    scheduleAIMove(roomId, difficulty, 300);
+  }
+}
+
+function scheduleAIMove(roomId, difficulty, delayMs) {
+  const delay = delayMs || (500 + Math.random() * 1000);
+  setTimeout(() => {
+    const room = rooms.get(roomId);
+    if (!room || room.gameOver) return;
+    const aiIdx = room.players.findIndex(p => p && p._isAI);
+    if (aiIdx < 0) return;
+    const aiRole = room.roles[aiIdx];
+    if (room.currentPlayer !== aiRole) return;
+    if (room.pendingSkill || room.ambushState) return;
+    executeAIMove(roomId, difficulty);
+  }, delay);
+}
+
+function executeAIMove(roomId, difficulty) {
+  const room = rooms.get(roomId);
+  if (!room || room.gameOver) return;
+  const aiIdx = room.players.findIndex(p => p && p._isAI);
+  if (aiIdx < 0) return;
+  const aiRole = room.roles[aiIdx];
+  if (room.currentPlayer !== aiRole && !(room.ambushState && room.ambushState.player === aiRole)) return;
+
+  // 暗度陈仓假棋子阶段：用AI引擎算假位置
+  if (room.ambushState && room.ambushState.player === aiRole && room.ambushState.phase === 'fake') {
+    const humanRole = room.roles.find(r => r !== aiRole);
+    const ambushPlan = aiAmbush(room, aiRole, humanRole);
+    const fakePos = ambushPlan ? ambushPlan.fakePos : [7, 7]; // fallback center
+    if (handleAmbushFake(room, fakePos[0], fakePos[1], aiRole)) {
+      return; // 假棋子已落，等真棋子阶段
+    }
+    // 如果假位置无效，随机选
+    const empties = getAllEmptyAI(room.board);
+    if (empties.length > 0) {
+      const [fr, fc] = empties[Math.floor(Math.random() * empties.length)];
+      handleAmbushFake(room, fr, fc, aiRole);
+    }
+    return;
+  }
+
+  // 暗度陈仓真棋子阶段：用AI引擎算真位置
+  if (room.ambushState && room.ambushState.player === aiRole && room.ambushState.phase === 'real') {
+    const humanRole = room.roles.find(r => r !== aiRole);
+    const ambushPlan = aiAmbush(room, aiRole, humanRole);
+    const realPos = ambushPlan ? ambushPlan.realPos : null;
+    // 真位置必须不同于假位置且为空
+    if (realPos && room.board[realPos[0]][realPos[1]] === EMPTY) {
+      const result = handlePlace(room, realPos[0], realPos[1], aiRole);
+      if (!result.error) broadcastAISnapshots(room, result);
+      return;
+    }
+    // fallback: 选最佳空位
+    const candidates = getCandidatesAI(room.board);
+    for (const [r, c] of candidates) {
+      if (room.board[r][c] === EMPTY) {
+        const result = handlePlace(room, r, c, aiRole);
+        if (!result.error) { broadcastAISnapshots(room, result); return; }
+      }
+    }
+    return;
+  }
+
+  const decision = getAIMove(room, difficulty);
+
+  if (decision.action === 'skill') {
+    handleAISkill(room, aiRole, decision, roomId, difficulty);
+  } else {
+    handleAIPlace(room, aiRole, decision, roomId, difficulty);
+  }
+}
+
+function getAllEmptyAI(board) {
+  const result = [];
+  for (let r = 0; r < N; r++)
+    for (let c = 0; c < N; c++)
+      if (board[r][c] === EMPTY) result.push([r, c]);
+  return result;
+}
+
+function getCandidatesAI(board, dist = 2) {
+  const hasStone = new Set();
+  const candidates = [];
+  for (let r = 0; r < N; r++) {
+    for (let c = 0; c < N; c++) {
+      if (board[r][c] !== EMPTY && board[r][c] !== 4 && board[r][c] !== 5) {
+        for (let dr = -dist; dr <= dist; dr++) {
+          for (let dc = -dist; dc <= dist; dc++) {
+            const nr = r + dr, nc = c + dc;
+            if (nr >= 0 && nr < N && nc >= 0 && nc < N && board[nr][nc] === EMPTY) {
+              const key = nr * N + nc;
+              if (!hasStone.has(key)) { hasStone.add(key); candidates.push([nr, nc]); }
+            }
+          }
+        }
+      }
+    }
+  }
+  if (candidates.length === 0) candidates.push([7, 7]);
+  return candidates;
+}
+
+function handleAIPlace(room, aiRole, decision, roomId, difficulty) {
+  const { r, c } = decision;
+
+  // 暗度陈仓假棋子阶段
+  if (room.ambushState && room.ambushState.player === aiRole && room.ambushState.phase === 'fake') {
+    if (handleAmbushFake(room, r, c, aiRole)) {
+      // 假棋子落下后，会进入real阶段
+      // 通过 processAIMessage 的 ambushFake 触发真棋子
+      return;
+    }
+  }
+
+  // 暗度陈仓真棋子阶段
+  if (room.ambushState && room.ambushState.player === aiRole && room.ambushState.phase === 'real') {
+    const result = handlePlace(room, r, c, aiRole);
+    if (!result.error) {
+      broadcastAISnapshots(room, result);
+    }
+    return;
+  }
+
+  const result = handlePlace(room, r, c, aiRole);
+  if (result.error) {
+    // AI尝试的位置无效，重新选择
+    // 回退：随机选一个空位
+    const empties = [];
+    for (let rr = 0; rr < N; rr++)
+      for (let cc = 0; cc < N; cc++)
+        if (room.board[rr][cc] === EMPTY) empties.push([rr, cc]);
+    if (empties.length > 0) {
+      const [fr, fc] = empties[Math.floor(Math.random() * empties.length)];
+      const fallback = handlePlace(room, fr, fc, aiRole);
+      if (!fallback.error) broadcastAISnapshots(room, fallback);
+    }
+    return;
+  }
+  broadcastAISnapshots(room, result);
+}
+
+function handleAISkill(room, aiRole, decision, roomId, difficulty) {
+  const msg = { type: 'useSkill', skill: decision.skill };
+
+  switch (decision.skill) {
+    case 'sandstorm':
+      msg.r = decision.r;
+      msg.c = decision.c;
+      break;
+    case 'stillwater':
+      msg.target = decision.target;
+      break;
+    case 'mountain':
+      break;
+    case 'swap':
+      msg.r = decision.r;
+      msg.c = decision.c;
+      break;
+    case 'move':
+      msg.fr = decision.fr;
+      msg.fc = decision.fc;
+      msg.tr = decision.tr;
+      msg.tc = decision.tc;
+      break;
+    case 'ambush':
+      // AI使用暗度陈仓：先激活技能，再落假棋子和真棋子
+      break;
+  }
+
+  const result = handleSkill(room, msg, aiRole);
+  if (result.error) {
+    // 技能使用失败，改为落子
+    const fallback = getAIMove(room, difficulty);
+    if (fallback.action === 'place') {
+      handleAIPlace(room, aiRole, fallback, roomId, difficulty);
+    }
+    return;
+  }
+
+  // 广播技能结果
+  for (const p of room.players) {
+    if (p && p.readyState === 1 && !p._isAI) {
+      const pRole = playerRole(p);
+      if (!pRole) continue;
+      const ps = personalSnap(room, pRole);
+      p.send(JSON.stringify({ type: 'skill', ...result, snapshot: ps }));
+    }
+  }
+  // AI自己也收到消息（通过processAIMessage处理后续回合）
+
+  // 暗度陈仓特殊处理：AI需要继续落假棋子
+  if (decision.skill === 'ambush' && result.ok) {
+    // ambushState已设为fake阶段，AI需要在假棋子阶段落子
+    scheduleAIMove(roomId, difficulty, 600);
+    return;
+  }
+
+  // 飞沙走石是pending状态，等resolveSandstorm后再触发AI
+  if (decision.skill === 'sandstorm') return;
+
+  // 检查是否又轮到AI（如stillwater跳过对手后）
+  if (room.aiMode && !room.gameOver && !room.pendingSkill) {
+    const aiIdx = room.players.findIndex(p => p && p._isAI);
+    if (aiIdx >= 0 && room.currentPlayer === room.roles[aiIdx]) {
+      scheduleAIMove(roomId, difficulty);
+    }
+  }
+}
+
+function broadcastAISnapshots(room, result) {
+  for (const p of room.players) {
+    if (p && p.readyState === 1 && !p._isAI) {
+      const pRole = playerRole(p);
+      if (!pRole) continue;
+      const ps = personalSnap(room, pRole);
+      p.send(JSON.stringify({ type: 'update', ...result, snapshot: ps }));
+    }
+  }
+  // 检查是否又轮到AI（如stillwater跳过对手后）
+  if (room.aiMode && !room.gameOver && !room.pendingSkill && !room.ambushState) {
+    const aiIdx = room.players.findIndex(p => p && p._isAI);
+    if (aiIdx >= 0 && room.currentPlayer === room.roles[aiIdx]) {
+      scheduleAIMove(room.id, room.aiDifficulty);
+    }
+  }
+}
 
 function createRoom(id, mode, names) {
   const count = mode === 3 ? 3 : 2;
@@ -106,12 +379,12 @@ function playerRole(ws) {
 
 function broadcastAll(room, msg) {
   const data = JSON.stringify(msg);
-  for (const p of room.players) if (p && p.readyState === WebSocket.OPEN) p.send(data);
+  for (const p of room.players) if (p && p.readyState === 1) p.send(data);
 }
 
 function broadcastExcept(room, msg, excludeWs) {
   const data = JSON.stringify(msg);
-  for (const p of room.players) if (p && p !== excludeWs && p.readyState === WebSocket.OPEN) p.send(data);
+  for (const p of room.players) if (p && p !== excludeWs && p.readyState === 1) p.send(data);
 }
 
 function snap(room) {
@@ -683,9 +956,25 @@ wss.on('connection', ws => {
         rooms.set(id,room);
         room.players[0]=ws;
         playerRoom.set(ws,id);
-        console.log(`[创建] 房间${id} ${mode}人`);
-        ws.send(JSON.stringify({type:'joined',roomId:id,role:room.roles[0],playerIndex:0,mode,names:room.names}));
-        ws.send(JSON.stringify({type:'roomUpdate',players:room.players.map(Boolean),settings:room.globalSettings,names:room.names,mode,allSkills:ALL_SKILLS}));
+
+        // 人机对战模式：AI自动加入P2位
+        if(msg.aiMode && msg.aiDifficulty){
+          room.aiMode = true;
+          room.aiDifficulty = msg.aiDifficulty;
+          const aiConn = new AIConnection(id, msg.aiDifficulty);
+          room.players[1] = aiConn;
+          const aiRole = room.roles[1];
+          room.names[aiRole] = `AI·${msg.aiDifficulty === 'simple' ? '初学' : msg.aiDifficulty === 'medium' ? '进阶' : '宗师'}`;
+          // AI随机选2个技能
+          const activeSkills = ALL_SKILLS.filter(s => s.type === 'active').map(s => s.id);
+          const shuffled = activeSkills.sort(() => Math.random() - 0.5);
+          room.equipped[aiRole] = shuffled.slice(0, 2);
+          console.log(`[创建AI] 房间${id} AI难度=${msg.aiDifficulty} 技能=${room.equipped[aiRole].join(',')}`);
+        }
+
+        console.log(`[创建] 房间${id} ${mode}人${msg.aiMode?' (AI '+msg.aiDifficulty+')':''}`);
+        ws.send(JSON.stringify({type:'joined',roomId:id,role:room.roles[0],playerIndex:0,mode,names:room.names,aiMode:room.aiMode||false,aiDifficulty:room.aiDifficulty||null}));
+        ws.send(JSON.stringify({type:'roomUpdate',players:room.players.map(p=>p!==null),settings:room.globalSettings,names:room.names,mode,allSkills:ALL_SKILLS,equipped:room.equipped,aiMode:room.aiMode||false,aiDifficulty:room.aiDifficulty||null}));
         break;
       }
       case 'join':{
@@ -693,6 +982,7 @@ wss.on('connection', ws => {
         const room=rooms.get(id);
         if(!room){ws.send(JSON.stringify({type:'error',message:'房间不存在'}));return;}
         if(room.gameStarted){ws.send(JSON.stringify({type:'error',message:'游戏已开始'}));return;}
+        if(room.aiMode){ws.send(JSON.stringify({type:'error',message:'人机对战房间无法加入'}));return;}
         const emptyIdx=room.players.findIndex(p=>p===null);
         if(emptyIdx===-1){ws.send(JSON.stringify({type:'error',message:'房间已满'}));return;}
         room.players[emptyIdx]=ws;
@@ -737,8 +1027,10 @@ wss.on('connection', ws => {
         const rid=playerRoom.get(ws);if(!rid)return;
         const room=rooms.get(rid);if(!room)return;
         if(room.players.indexOf(ws)!==0)return;
-        if(room.players.some(p=>p===null))return;
-        // Check all players equipped skills
+        // AI房间的AI位不是null
+        const hasEmptySlot = room.players.some(p => p === null);
+        if(hasEmptySlot) return;
+        // Check all players equipped skills (AI已自动装备)
         for(const role of room.roles){
           if(!room.equipped[role]||room.equipped[role].length===0){
             return ws.send(JSON.stringify({type:'error',message:`${room.names[role]}尚未选择技能`}));
@@ -748,7 +1040,7 @@ wss.on('connection', ws => {
         for(const r of room.roles) room.scores[r]=0;
         initSkillState(room);
         console.log(`[开始] 房间${rid}`);
-        broadcastAll(room,{type:'gameStart',snapshot:snap(room),names:room.names,mode:room.mode});
+        broadcastAll(room,{type:'gameStart',snapshot:snap(room),names:room.names,mode:room.mode,aiMode:room.aiMode||false});
         break;
       }
       case 'place':{
@@ -790,9 +1082,16 @@ wss.on('connection', ws => {
         for(const p of room.players){
           if(p&&p.readyState===1){
             const pRole=playerRole(p);
-            if(!pRole) continue; // 跳过无效角色
+            if(!pRole) continue; // 跳过无效角色（包括AI）
             const ps=personalSnap(room,pRole);
             p.send(JSON.stringify({type:'update',...result,snapshot:ps}));
+          }
+        }
+        // AI回合触发
+        if(room.aiMode && !room.gameOver && !room.pendingSkill && !room.ambushState){
+          const aiIdx=room.players.findIndex(p=>p&&p._isAI);
+          if(aiIdx>=0 && room.currentPlayer===room.roles[aiIdx]){
+            scheduleAIMove(rid, room.aiDifficulty);
           }
         }
         break;
@@ -807,8 +1106,16 @@ wss.on('connection', ws => {
         for(const p of room.players){
           if(p&&p.readyState===1){
             const pRole=playerRole(p);
+            if(!pRole) continue;
             const ps=personalSnap(room,pRole);
             p.send(JSON.stringify({type:'skill',...result,snapshot:ps}));
+          }
+        }
+        // AI回合触发（非sandstorm pending状态）
+        if(room.aiMode && !room.gameOver && !room.pendingSkill){
+          const aiIdx=room.players.findIndex(p=>p&&p._isAI);
+          if(aiIdx>=0 && room.currentPlayer===room.roles[aiIdx]){
+            scheduleAIMove(rid, room.aiDifficulty);
           }
         }
         break;
@@ -845,6 +1152,15 @@ wss.on('connection', ws => {
         const room=rooms.get(rid);if(!room)return;
         const pi=room.players.indexOf(ws);if(pi<0)return;
         room.ready[pi]=true;
+        // AI房间：人类请求直接重启
+        if(room.aiMode){
+          const scores=room.scores;const settings=room.globalSettings;const equipped=room.equipped;
+          resetRoom(room);room.scores=scores;room.globalSettings=settings;room.equipped=equipped;room.gameStarted=true;
+          room.aiMode=true;room.aiDifficulty=room.aiDifficulty||'medium';
+          initSkillState(room);
+          broadcastAll(room,{type:'restarted',snapshot:snap(room),names:room.names,mode:room.mode});
+          break;
+        }
         for(const opp of room.players){if(opp&&opp!==ws&&opp.readyState===1)opp.send(JSON.stringify({type:'restartRequested'}));}
         if(room.ready.every(Boolean)){
           const scores=room.scores;const settings=room.globalSettings;const equipped=room.equipped;
@@ -867,6 +1183,18 @@ wss.on('connection', ws => {
         const role=playerRole(ws);if(!role)return;
         const result = handleUndoRequest(room, role);
         if(result.error){ws.send(JSON.stringify({type:'error',message:result.error}));return;}
+        // AI房间：AI自动接受悔棋
+        if(room.aiMode){
+          const aiIdx=room.players.findIndex(p=>p&&p._isAI);
+          const aiRole=aiIdx>=0?room.roles[aiIdx]:null;
+          if(aiRole){
+            const undoResult = handleUndoResponse(room, aiRole, true);
+            if(undoResult.undoAccepted){
+              broadcastAll(room,{type:'undoAccepted',from:aiRole,undone:undoResult.undone,snapshot:undoResult.snapshot});
+            }
+          }
+          break;
+        }
         broadcastAll(room,{type:'undoRequestPending',from:role,snapshot:snap(room)});
         break;
       }
@@ -895,6 +1223,14 @@ wss.on('connection', ws => {
     room.players[pi]=null;playerRoom.delete(ws);
     if(room.pendingTimer){clearTimeout(room.pendingTimer);room.pendingTimer=null;}
     room.pendingSkill=null;
+    // AI房间：人类离开时清理整个房间
+    if(room.aiMode){
+      const aiIdx=room.players.findIndex(p=>p&&p._isAI);
+      if(aiIdx>=0) room.players[aiIdx]=null;
+      rooms.delete(rid);
+      console.log(`[AI房间关闭] 房间${rid}`);
+      return;
+    }
     broadcastAll(room,{type:'playerLeft',playerIndex:pi,role});
     if(room.players.every(p=>p===null))setTimeout(()=>{if(room.players.every(p=>p===null))rooms.delete(rid);},30000);
   });
