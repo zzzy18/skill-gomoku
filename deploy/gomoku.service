@@ -1,0 +1,15 @@
+[Unit]
+Description=星虚对弈 - 多人在线五子棋
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/opt/gomoku-online
+ExecStart=/usr/bin/node server.js
+Restart=on-failure
+RestartSec=5
+Environment=PORT=3000 NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target

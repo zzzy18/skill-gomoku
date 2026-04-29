@@ -1,0 +1,1092 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>星虚对弈 — 多人在线对战</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+@import url('https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@200;400;700&display=swap');
+body{background:#08080f;color:#d8d0c4;font-family:'Noto Serif SC',serif;overflow-x:hidden;overflow-y:auto;height:100vh;height:100dvh;
+  -webkit-tap-highlight-color:transparent;-webkit-text-size-adjust:100%;touch-action:manipulation}
+#bg-canvas{position:fixed;top:0;left:0;z-index:0;pointer-events:none}
+
+/* ── Lobby ── */
+#lobby{position:fixed;top:0;left:0;width:100%;height:100%;z-index:20;
+  display:flex;align-items:center;justify-content:center;overflow-y:auto;-webkit-overflow-scrolling:touch;transition:opacity .5s;
+  padding-bottom:200px}
+#lobby.hidden{opacity:0;pointer-events:none}
+.lobby-box{text-align:center;animation:fadeUp .6s ease-out;padding:20px}
+.lobby-box h1{font-size:34px;font-weight:200;letter-spacing:10px;margin-bottom:4px;
+  background:linear-gradient(135deg,#ffd89b,#7a5fff,#50e8c0);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.lobby-box .sub{font-size:13px;opacity:.4;margin-bottom:28px;letter-spacing:3px}
+.mode-select{display:flex;gap:12px;margin-bottom:20px;justify-content:center}
+.mode-btn{width:140px;padding:18px 10px;border-radius:12px;border:1px solid rgba(255,255,255,.08);
+  background:rgba(255,255,255,.02);color:#d8d0c4;cursor:pointer;font-family:inherit;transition:all .3s;text-align:center}
+.mode-btn:hover,.mode-btn:active{background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.15)}
+.mode-btn.selected{border-color:rgba(255,216,155,.4);background:rgba(255,216,155,.06)}
+.mode-btn .num{font-size:28px;font-weight:200;display:block}
+.mode-btn .label{font-size:11px;opacity:.5;letter-spacing:2px;margin-top:4px}
+.name-input{width:200px;padding:10px 14px;border-radius:10px;border:1px solid rgba(255,255,255,.1);
+  background:rgba(255,255,255,.04);color:#d8d0c4;font-family:inherit;font-size:14px;
+  letter-spacing:2px;text-align:center;margin-bottom:16px}
+.name-input::placeholder{letter-spacing:1px;opacity:.3;font-size:12px}
+.name-input:focus{outline:none;border-color:rgba(255,216,155,.3)}
+.lobby-actions{display:flex;flex-direction:column;gap:10px;align-items:center}
+.lobby-btn{width:220px;padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,.1);
+  background:rgba(255,255,255,.03);color:#d8d0c4;cursor:pointer;font-family:inherit;
+  font-size:14px;letter-spacing:2px;transition:all .3s}
+.lobby-btn:hover,.lobby-btn:active{background:rgba(255,255,255,.08)}
+.lobby-btn.primary{border-color:rgba(255,216,155,.3);color:#ffd89b}
+.join-row{display:flex;gap:8px;margin-top:4px}
+.join-input{width:150px;padding:10px 12px;border-radius:10px;border:1px solid rgba(255,255,255,.12);
+  background:rgba(255,255,255,.04);color:#d8d0c4;font-family:inherit;font-size:15px;
+  letter-spacing:6px;text-align:center;text-transform:uppercase}
+.join-input::placeholder{letter-spacing:2px;text-transform:none;opacity:.3;font-size:12px}
+.join-input:focus{outline:none;border-color:rgba(122,95,255,.4)}
+.join-go{padding:10px 16px;border-radius:10px;border:1px solid rgba(122,95,255,.3);
+  background:rgba(122,95,255,.08);color:#9b8fff;cursor:pointer;font-family:inherit;font-size:13px}
+
+/* ── Room ── */
+#room-screen{position:fixed;top:0;left:0;width:100%;height:100%;z-index:18;
+  display:flex;align-items:center;justify-content:center;overflow-y:auto;-webkit-overflow-scrolling:touch;
+  opacity:0;pointer-events:none;transition:opacity .5s}
+#room-screen.show{opacity:1;pointer-events:auto}
+.room-box{width:520px;max-width:96vw;padding:24px;border-radius:14px;
+  background:rgba(14,14,24,.95);border:1px solid rgba(255,255,255,.06);animation:fadeUp .5s ease-out;
+  max-height:92vh;overflow-y:auto}
+.room-box::-webkit-scrollbar{width:3px}
+.room-box::-webkit-scrollbar-thumb{background:rgba(255,255,255,.08);border-radius:2px}
+.room-box h2{font-size:17px;font-weight:200;letter-spacing:4px;text-align:center;margin-bottom:12px;
+  background:linear-gradient(135deg,#ffd89b,#7a5fff,#50e8c0);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.room-code-area{text-align:center;margin-bottom:14px}
+.room-code-area .code{font-size:28px;font-weight:200;letter-spacing:10px;opacity:.8}
+.room-code-area .hint{font-size:10px;opacity:.3;margin-top:4px}
+.room-code-area .copy-btn{margin-top:6px;padding:3px 12px;border-radius:6px;border:1px solid rgba(255,255,255,.06);
+  background:rgba(255,255,255,.03);color:#d8d0c4;cursor:pointer;font-family:inherit;font-size:10px}
+
+.players-row{display:flex;gap:6px;margin-bottom:14px}
+.player-slot{flex:1;padding:10px 6px;border-radius:10px;text-align:center;
+  border:1px solid rgba(255,255,255,.06);background:rgba(255,255,255,.02)}
+.player-slot.filled{border-color:rgba(255,255,255,.12)}
+.player-slot .icon{width:22px;height:22px;border-radius:50%;margin:0 auto 4px}
+.player-slot .name-label{font-size:11px;letter-spacing:1px;opacity:.8}
+.player-slot .wait{font-size:9px;opacity:.3;margin-top:2px}
+.player-slot .name-edit{width:90%;padding:2px 4px;border-radius:4px;border:1px solid rgba(255,255,255,.1);
+  background:rgba(255,255,255,.04);color:#d8d0c4;font-family:inherit;font-size:10px;text-align:center;margin-top:3px}
+.player-slot .name-edit:focus{outline:none;border-color:rgba(255,216,155,.3)}
+.player-slot .equipped-label{font-size:8px;opacity:.35;margin-top:2px}
+
+.pc1 .icon{background:radial-gradient(circle at 35% 35%,#fff8e7,#ffd89b,#c9963a);box-shadow:0 0 8px rgba(255,216,155,.4)}
+.pc2 .icon{background:radial-gradient(circle at 35% 35%,#b39dff,#7a5fff,#3a1f9e);box-shadow:0 0 8px rgba(90,50,200,.4)}
+.pc3 .icon{background:radial-gradient(circle at 35% 35%,#a0ffe0,#50e8c0,#1a9e7a);box-shadow:0 0 8px rgba(80,232,192,.4)}
+.pc-empty .icon{background:rgba(255,255,255,.05);border:1px dashed rgba(255,255,255,.12)}
+
+/* Skill selection */
+.skill-select-section{margin-bottom:14px;border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;background:rgba(255,255,255,.015)}
+.skill-select-section h3{font-size:12px;font-weight:400;letter-spacing:2px;opacity:.5;margin-bottom:8px;text-align:center}
+.skill-grid{display:flex;flex-wrap:wrap;gap:6px;justify-content:center}
+.skill-pick{width:calc(50% - 6px);padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,.06);
+  background:rgba(255,255,255,.02);cursor:pointer;transition:all .3s;text-align:left}
+.skill-pick:hover{background:rgba(255,255,255,.05)}
+.skill-pick.selected{border-color:rgba(255,216,155,.4);background:rgba(255,216,155,.06)}
+.skill-pick.picked-by-other{opacity:.25;cursor:default}
+.skill-pick .sp-name{font-size:11px;font-weight:400;margin-bottom:2px}
+.skill-pick .sp-desc{font-size:9px;opacity:.4;line-height:1.4}
+.skill-pick .sp-type{font-size:8px;opacity:.25;margin-top:2px}
+.skill-pick.selected .sp-name{color:#ffd89b}
+
+.settings-section{margin-bottom:14px}
+.settings-section h3{font-size:11px;font-weight:400;letter-spacing:2px;opacity:.45;margin-bottom:6px}
+.setting-row{display:flex;align-items:center;justify-content:space-between;padding:4px 0;font-size:11px}
+.setting-row .label{opacity:.55}
+.toggle{position:relative;width:36px;height:20px;border-radius:10px;background:rgba(255,255,255,.08);
+  cursor:pointer;transition:background .3s;border:none;padding:0;flex-shrink:0}
+.toggle.on{background:rgba(255,216,155,.25)}
+.toggle::after{content:'';position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#555;transition:all .3s}
+.toggle.on::after{left:18px;background:#ffd89b}
+.toggle:disabled{opacity:.3;cursor:default}
+
+.start-btn{width:100%;padding:11px;border-radius:10px;border:1px solid rgba(255,216,155,.3);
+  background:rgba(255,216,155,.08);color:#ffd89b;cursor:pointer;font-family:inherit;
+  font-size:13px;letter-spacing:3px;transition:all .3s}
+.start-btn:hover{background:rgba(255,216,155,.15)}
+.start-btn:disabled{opacity:.2;cursor:default;border-color:rgba(255,255,255,.06);color:#666;background:rgba(255,255,255,.02)}
+
+/* ── Game ── */
+#game{position:fixed;top:0;left:0;width:100%;height:100%;z-index:5;
+  display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;overflow-x:hidden;
+  opacity:0;pointer-events:none;transition:opacity .5s;
+  -webkit-overflow-scrolling:touch;padding:8px 0}
+#game.show{opacity:1;pointer-events:auto}
+.game-wrap{display:flex;gap:12px;align-items:flex-start}
+.main-col{display:flex;flex-direction:column;align-items:center;gap:7px}
+.title{font-size:18px;font-weight:200;letter-spacing:6px;
+  background:linear-gradient(135deg,#ffd89b,#7a5fff,#50e8c0);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.info-bar{display:flex;align-items:center;gap:8px;font-size:10px;flex-wrap:wrap;justify-content:center}
+.player-ind{display:flex;align-items:center;gap:4px;padding:3px 9px;border-radius:10px;
+  border:1px solid transparent;transition:all .4s}
+.player-ind.active{border-color:rgba(255,255,255,.15);background:rgba(255,255,255,.05)}
+.player-ind.me{box-shadow:inset 0 0 0 1px rgba(255,255,255,.06)}
+.dot{width:9px;height:9px;border-radius:50%}
+.dot.c1{background:radial-gradient(circle at 35% 35%,#fff8e7,#ffd89b,#c9963a);box-shadow:0 0 4px rgba(255,216,155,.4)}
+.dot.c2{background:radial-gradient(circle at 35% 35%,#b39dff,#7a5fff,#3a1f9e);box-shadow:0 0 4px rgba(90,50,200,.3)}
+.dot.c3{background:radial-gradient(circle at 35% 35%,#a0ffe0,#50e8c0,#1a9e7a);box-shadow:0 0 4px rgba(80,232,192,.3)}
+.score-text{opacity:.5;font-size:10px;font-weight:200}
+#board-canvas{border-radius:5px;cursor:crosshair;box-shadow:0 0 35px rgba(100,80,60,.05)}
+.bottom-bar{display:flex;align-items:center;gap:7px;font-size:9px}
+.btn{padding:3px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.1);
+  background:rgba(255,255,255,.04);color:#d8d0c4;cursor:pointer;font-family:inherit;font-size:9px;transition:all .3s}
+.btn:hover,.btn:active{background:rgba(255,255,255,.1)}
+
+/* Side panel */
+.side-panel{width:210px;display:flex;flex-direction:column;gap:5px;font-size:10px;max-height:88vh;overflow-y:auto}
+.side-panel::-webkit-scrollbar{width:2px}
+.side-panel::-webkit-scrollbar-thumb{background:rgba(255,255,255,.06)}
+.card{padding:7px 9px;border-radius:5px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.04)}
+.card h3{font-size:10px;font-weight:400;margin-bottom:2px;letter-spacing:1px;opacity:.6}
+.card p{line-height:1.5;opacity:.4;font-size:9px}
+.skill-btn{display:block;width:100%;margin-top:4px;padding:4px 0;border-radius:5px;
+  border:1px solid rgba(255,255,255,.07);background:rgba(255,255,255,.03);color:#d8d0c4;
+  cursor:pointer;font-family:inherit;font-size:9px;letter-spacing:1px;transition:all .3s}
+.skill-btn:hover:not(:disabled),.skill-btn:active:not(:disabled){background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.14)}
+.skill-btn:disabled{opacity:.2;cursor:default}
+.skill-btn.s_sandstorm{border-color:rgba(255,150,60,.2);color:#ffaa55}
+.skill-btn.s_stillwater{border-color:rgba(80,180,255,.2);color:#66bbff}
+.skill-btn.s_mountain{border-color:rgba(200,160,80,.2);color:#ccaa55}
+.skill-btn.s_swap{border-color:rgba(200,100,255,.2);color:#cc77ff}
+.skill-btn.s_move{border-color:rgba(100,200,255,.2);color:#66ccff}
+.skill-btn.s_ambush{border-color:rgba(80,200,120,.2);color:#55cc77}
+.skill-btn.intercept{border-color:rgba(255,80,80,.25);color:#ff7766;animation:iPulse .5s ease-in-out infinite}
+@keyframes iPulse{0%,100%{box-shadow:0 0 4px rgba(255,80,80,.12)}50%{box-shadow:0 0 14px rgba(255,80,80,.35)}}
+
+.skill-card{padding:6px 8px;border-radius:5px;background:rgba(255,255,255,.015);border:1px solid rgba(255,255,255,.04);margin-bottom:4px}
+.skill-card h4{font-size:10px;font-weight:400;letter-spacing:1px;margin-bottom:2px}
+.skill-card .cooldown{font-size:8px;opacity:.35;margin-top:2px}
+
+.chat-box{padding:7px 9px;border-radius:5px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.04);
+  display:flex;flex-direction:column;height:120px}
+.chat-box h3{font-size:10px;font-weight:400;margin-bottom:3px;letter-spacing:1px;opacity:.6}
+.chat-messages{flex:1;overflow-y:auto;font-size:9px;line-height:1.6;opacity:.55;margin-bottom:3px}
+.chat-messages::-webkit-scrollbar{width:2px}
+.chat-input-row{display:flex;gap:3px}
+.chat-input{flex:1;padding:2px 5px;border-radius:4px;border:1px solid rgba(255,255,255,.06);
+  background:rgba(255,255,255,.02);color:#d8d0c4;font-family:inherit;font-size:9px}
+.chat-input:focus{outline:none;border-color:rgba(255,255,155,.1)}
+.chat-send{padding:2px 7px;border-radius:4px;border:1px solid rgba(255,255,255,.06);
+  background:rgba(255,255,255,.03);color:#d8d0c4;cursor:pointer;font-size:9px}
+
+#nova-btn{display:none;position:absolute;padding:5px 14px;border-radius:12px;
+  border:1px solid rgba(255,180,60,.4);background:rgba(255,180,60,.1);color:#ffcc70;
+  font-family:inherit;font-size:10px;cursor:pointer;z-index:6;
+  animation:pulseGlow 1.2s ease-in-out infinite}
+@keyframes pulseGlow{0%,100%{box-shadow:0 0 8px rgba(255,180,60,.1)}50%{box-shadow:0 0 20px rgba(255,180,60,.3)}}
+
+.intercept-banner{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:25;
+  padding:14px 24px;border-radius:12px;text-align:center;
+  background:rgba(12,12,22,.92);border:1px solid rgba(255,80,80,.3);
+  box-shadow:0 0 35px rgba(255,80,80,.12);animation:fadeUp .3s ease-out}
+.intercept-banner h3{font-size:14px;font-weight:200;letter-spacing:3px;color:#ff7766;margin-bottom:5px}
+.intercept-banner p{font-size:10px;opacity:.5;margin-bottom:8px}
+.intercept-banner .intercept-btn{padding:5px 18px;border-radius:8px;border:1px solid rgba(255,80,80,.4);
+  background:rgba(255,80,80,.1);color:#ff7766;cursor:pointer;font-family:inherit;font-size:11px;
+  animation:iPulse .5s ease-in-out infinite}
+.intercept-timer{width:100px;height:3px;border-radius:2px;background:rgba(255,255,255,.06);margin:6px auto 0;overflow:hidden}
+.intercept-timer-fill{height:100%;background:#ff7766;border-radius:2px;transition:width 1.2s linear}
+
+.undo-banner{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:25;
+  padding:14px 24px;border-radius:12px;text-align:center;
+  background:rgba(12,12,22,.92);border:1px solid rgba(80,200,120,.3);
+  box-shadow:0 0 35px rgba(80,200,120,.12);animation:fadeUp .3s ease-out}
+.undo-banner h3{font-size:14px;font-weight:200;letter-spacing:3px;color:#55cc77;margin-bottom:5px}
+.undo-banner p{font-size:10px;opacity:.5;margin-bottom:8px}
+.undo-banner .undo-btns{display:flex;gap:8px;justify-content:center}
+.undo-banner .undo-btn{padding:5px 18px;border-radius:8px;border:1px solid rgba(80,200,120,.4);
+  background:rgba(80,200,120,.1);color:#55cc77;cursor:pointer;font-family:inherit;font-size:11px}
+.undo-banner .undo-btn.reject{border-color:rgba(255,80,80,.4);background:rgba(255,80,80,.1);color:#ff7766}
+
+.notif-container{position:fixed;top:12px;right:12px;z-index:60;display:flex;flex-direction:column;gap:4px}
+.notif{padding:5px 10px;border-radius:7px;font-size:9px;letter-spacing:1px;
+  animation:notifIn .3s ease-out;transition:opacity .4s;border:1px solid rgba(255,255,255,.05);
+  background:rgba(10,10,20,.88);backdrop-filter:blur(5px)}
+.notif.fade{opacity:0}
+@keyframes notifIn{from{transform:translateX(18px);opacity:0}to{transform:translateX(0);opacity:1}}
+
+.overlay{position:fixed;top:0;left:0;width:100%;height:100%;z-index:50;
+  display:flex;align-items:center;justify-content:center;
+  background:rgba(5,5,15,.88);opacity:0;pointer-events:none;transition:opacity .6s}
+.overlay.show{opacity:1;pointer-events:auto}
+.ov-content{text-align:center;animation:fadeUp .5s ease-out}
+.ov-content h2{font-size:26px;font-weight:200;letter-spacing:5px;
+  background:linear-gradient(135deg,#ffd89b,#7a5fff,#50e8c0);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.ov-content p{margin-top:5px;font-size:11px;opacity:.5}
+.ov-content .btn{margin-top:12px}
+
+.conn{position:fixed;top:5px;left:5px;z-index:60;font-size:8px;opacity:.2;letter-spacing:1px}
+.conn.ok{color:#6d6}.conn.bad{color:#d66}
+
+@keyframes fadeUp{from{transform:translateY(12px);opacity:0}to{transform:translateY(0);opacity:1}}
+
+/* ══════ Mobile ══════ */
+@media(max-width:860px){
+  .lobby-box h1{font-size:26px;letter-spacing:6px}
+  .mode-btn{width:110px;padding:14px 8px}
+  .mode-btn .num{font-size:22px}
+  .name-input{width:70vw;font-size:16px}
+  .lobby-btn{width:70vw;font-size:13px;padding:11px}
+  .join-input{width:42vw;font-size:16px;padding:10px}
+  .join-go{padding:10px 14px;font-size:14px}
+
+  .room-box{max-width:96vw;padding:16px 12px}
+  .room-code-area .code{font-size:22px;letter-spacing:6px}
+  .skill-grid{gap:4px}
+  .skill-pick{width:calc(50% - 4px);padding:6px}
+
+  .game-wrap{flex-direction:column;gap:6px;align-items:center;padding:env(safe-area-inset-top) 4px env(safe-area-inset-bottom)}
+  .main-col{gap:5px}
+  .title{font-size:15px;letter-spacing:4px}
+  .info-bar{gap:5px;font-size:9px}
+  .player-ind{padding:2px 7px;gap:3px}
+  .dot{width:7px;height:7px}
+  .bottom-bar{gap:5px}
+  .btn{padding:3px 8px;font-size:9px}
+
+  .side-panel{width:100%;max-width:100vw;max-height:none;
+    flex-direction:row;flex-wrap:wrap;gap:4px;
+    padding:0 6px 8px;overflow-y:visible;overflow-x:hidden}
+  .side-panel .card,.side-panel .skill-card,.side-panel .chat-box{
+    flex:1 1 140px;min-width:120px;max-width:50%}
+  .side-panel .chat-box{flex:1 1 100%;max-width:100%;height:100px}
+
+  .intercept-banner{padding:10px 18px;width:80vw;max-width:300px}
+  .intercept-banner h3{font-size:12px}
+  .toggle{width:42px;height:24px;border-radius:12px}
+  .toggle::after{width:18px;height:18px}
+  .toggle.on::after{left:22px}
+  .start-btn{font-size:12px;padding:10px}
+  .setting-row{padding:6px 0}
+  .skill-btn{padding:5px 0;font-size:10px}
+}
+@media(max-width:420px){
+  .lobby-box h1{font-size:22px;letter-spacing:4px}
+  .mode-btn{width:44vw;padding:12px 6px}
+  .mode-btn .num{font-size:20px}
+  .name-input{width:80vw;font-size:16px}
+  .lobby-btn{width:80vw}
+  .join-input{width:48vw}
+  .title{font-size:13px;letter-spacing:3px}
+  .player-ind span:not(.score-text){font-size:8px}
+  .side-panel .card,.side-panel .skill-card{flex:1 1 100%;max-width:100%}
+}
+@supports(height:100dvh){body{height:100dvh}}
+</style>
+</head>
+<body>
+
+<canvas id="bg-canvas"></canvas>
+<div class="conn" id="conn">未连接</div>
+<div class="notif-container" id="notif-container"></div>
+
+<!-- Lobby -->
+<div id="lobby">
+  <div class="lobby-box">
+    <h1>星虚对弈</h1>
+    <div class="sub">多人在线对战</div>
+    <div class="mode-select">
+      <div class="mode-btn selected" data-mode="2" onclick="selectMode(2)" ontouchend="event.preventDefault();selectMode(2)"><span class="num">2</span><span class="label">人对战</span></div>
+      <div class="mode-btn" data-mode="3" onclick="selectMode(3)" ontouchend="event.preventDefault();selectMode(3)"><span class="num">3</span><span class="label">人对战</span></div>
+    </div>
+    <input class="name-input" id="my-name" placeholder="你的名称" maxlength="8">
+    <div class="lobby-actions">
+      <button class="lobby-btn primary" onclick="createRoom()" ontouchend="event.preventDefault();createRoom()">创建对局</button>
+      <div style="font-size:10px;opacity:.2;margin:1px 0">— 或 —</div>
+      <div class="join-row">
+        <input class="join-input" id="join-code" placeholder="房间号" maxlength="5" autocomplete="off">
+        <button class="join-go" onclick="joinRoom()" ontouchend="event.preventDefault();joinRoom()">加入</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Room -->
+<div id="room-screen">
+  <div class="room-box" id="room-box"></div>
+</div>
+
+<!-- Game -->
+<div id="game">
+  <div class="game-wrap">
+    <div class="main-col">
+      <div class="title">星 虚 对 弈</div>
+      <div class="info-bar" id="info-bar"></div>
+      <div style="position:relative">
+        <canvas id="board-canvas"></canvas>
+        <button id="nova-btn" onclick="triggerSupernova()">引爆超新星</button>
+      </div>
+      <div class="bottom-bar">
+        <button class="btn" onclick="requestUndo()">悔棋</button>
+        <button class="btn" onclick="requestRestart()">重新开始</button>
+        <button class="btn" onclick="leaveRoom()">离开</button>
+        <span class="score-text" id="move-count">第 0 手</span>
+      </div>
+    </div>
+    <div class="side-panel" id="side-panel"></div>
+  </div>
+</div>
+
+<!-- Overlay -->
+<div class="overlay" id="overlay">
+  <div class="ov-content">
+    <h2 id="winner-text"></h2>
+    <p id="winner-sub"></p>
+    <button class="btn" onclick="requestRestart()">再来一局</button>
+  </div>
+</div>
+
+<div id="intercept-container"></div>
+<div id="undo-container"></div>
+
+<script>
+// ═══════════════════════════════════════
+const N=15, EMPTY=0, P1=1, P2=2, P3=3, RUIN=4, RIFT=5;
+const DEFAULT_NAMES={1:'星辰',2:'虚空',3:'极光'};
+const PC={[P1]:'255,216,155',[P2]:'122,95,255',[P3]:'80,232,192'};
+const PCSS={[P1]:'c1',[P2]:'c2',[P3]:'c3'};
+const PSCSS={[P1]:'pc1',[P2]:'pc2',[P3]:'pc3'};
+
+const ALL_SKILLS=[
+  {id:'sandstorm',name:'飞沙走石',type:'active',desc:'移除一枚棋子并留下废墟，每5回合可用一次'},
+  {id:'stillwater',name:'静如止水',type:'active',desc:'跳过一名角色的回合'},
+  {id:'intercept',name:'擒拿',type:'passive',desc:'飞沙走石发动时可打断'},
+  {id:'mountain',name:'力拔山兮',type:'active',desc:'回合≥50直接获胜'},
+  {id:'swap',name:'偷梁换柱',type:'active',desc:'将敌方棋子变为己方3回合，期间不计胜利'},
+  {id:'move',name:'斗转星移',type:'active',desc:'移动任意棋子到空位，冷却5回合'},
+  {id:'impervious',name:'无懈可击',type:'passive',desc:'己方棋子无法被技能选中'},
+  {id:'ambush',name:'暗度陈仓',type:'active',desc:'连下2子：第1子为假(对手可见但不计胜利)，第2子为真(对手不可见)，全局只能用一次'},
+];
+
+let cellSize,pad,boardPx;
+const bCvs=document.getElementById('board-canvas'),bCtx=bCvs.getContext('2d');
+const bgCvs=document.getElementById('bg-canvas'),bgCtx=bgCvs.getContext('2d');
+
+let myRole=null,roomId=null,ws=null,snap=null;
+let isCreator=false,gameMode=2,names={...DEFAULT_NAMES};
+let myEquipped=[]; // skills I've chosen
+let selectedSkills=[]; // during selection in room
+let lastRoomUpdate=null; // cache last room state for UI rebuild
+let hoverPos=null,ripples=[],particles=[],winGlow=0;
+let sandstormMode=false,swapMode=false,moveFromMode=false,moveFrom=null;
+
+// ═══════════════════════════════════════
+//  Lobby
+// ═══════════════════════════════════════
+function selectMode(m){gameMode=m;document.querySelectorAll('.mode-btn').forEach(b=>b.classList.toggle('selected',parseInt(b.dataset.mode)===m))}
+function getMyName(){return document.getElementById('my-name').value.trim()||DEFAULT_NAMES[P1]}
+function createRoom(){if(!ws||ws.readyState!==1){notify('未连接','error');return;}const n=getMyName();const initNames={...DEFAULT_NAMES};initNames[P1]=n;send({type:'create',mode:gameMode,names:initNames})}
+function joinRoom(){const code=document.getElementById('join-code').value.trim().toUpperCase();if(code.length!==5){notify('请输入5位房间号','error');return;}send({type:'join',roomId:code,name:getMyName()})}
+function copyCode(){
+  if(!roomId){notify('无房间号','error');return;}
+  // iOS Safari 兼容：尝试多种复制方式
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(roomId).then(()=>notify('已复制','info')).catch(()=>{
+      fallbackCopy(roomId);
+    });
+  }else{
+    fallbackCopy(roomId);
+  }
+}
+function fallbackCopy(text){
+  // 传统复制方法（兼容旧浏览器和 iOS）
+  const ta=document.createElement('textarea');
+  ta.value=text;
+  ta.style.position='fixed';
+  ta.style.left='-9999px';
+  ta.style.top='0';
+  ta.readOnly=false;
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  ta.setSelectionRange(0,9999);
+  try{
+    const ok=document.execCommand('copy');
+    if(ok)notify('已复制','info');
+    else{notify('复制失败，请手动复制: '+text,'error');}
+  }catch(e){
+    notify('复制失败，请手动复制: '+text,'error');
+  }
+  document.body.removeChild(ta);
+}
+function leaveRoom(){if(ws)ws.close();myRole=null;roomId=null;snap=null;showScreen('lobby')}
+document.getElementById('join-code').addEventListener('keydown',e=>{if(e.key==='Enter')joinRoom()});
+// iOS 键盘弹出时滚动输入框到可视区域
+// iOS 键盘弹出处理 - 使用 visualViewport 动态调整布局
+function handleKeyboardPopup(){
+  if(!visualViewport)return;
+  const lobby=document.getElementById('lobby');
+  const vpHeight=visualViewport.height;
+  const scale=visualViewport.scale||1;
+  // 键盘弹出时，将 lobby 内容向上移动
+  const offset=Math.max(0,window.innerHeight-vpHeight);
+  if(offset>100){
+    lobby.style.paddingBottom=offset+100+'px';
+    lobby.scrollTop=lobby.scrollHeight;
+  }else{
+    lobby.style.paddingBottom='200px';
+  }
+}
+if(visualViewport){
+  visualViewport.addEventListener('resize',()=>{
+    calcSize();
+    handleKeyboardPopup();
+  });
+  visualViewport.addEventListener('scroll',()=>window.scrollTo(0,0));
+}
+
+document.getElementById('join-code').addEventListener('focus',e=>{
+  setTimeout(()=>{
+    e.target.scrollIntoView({behavior:'smooth',block:'center'});
+    handleKeyboardPopup();
+  },150);
+});
+document.getElementById('my-name').addEventListener('focus',e=>{
+  setTimeout(()=>{
+    e.target.scrollIntoView({behavior:'smooth',block:'center'});
+    handleKeyboardPopup();
+  },150);
+});
+
+function showScreen(n){document.getElementById('lobby').classList.toggle('hidden',n!=='lobby');document.getElementById('room-screen').classList.toggle('show',n==='room');document.getElementById('game').classList.toggle('show',n==='game')}
+
+// ═══════════════════════════════════════
+//  WebSocket
+// ═══════════════════════════════════════
+function connectWS(){
+  const proto=location.protocol==='https:'?'wss:':'ws:';
+  ws=new WebSocket(`${proto}//${location.host}`);
+  ws.onopen=()=>{document.getElementById('conn').textContent='已连接';document.getElementById('conn').className='conn ok'};
+  ws.onclose=()=>{document.getElementById('conn').textContent='已断开';document.getElementById('conn').className='conn bad';setTimeout(connectWS,3000)};
+  ws.onerror=()=>{};
+  ws.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch{return}handleMsg(m)};
+}
+function send(msg){if(ws&&ws.readyState===1)ws.send(JSON.stringify(msg))}
+
+function handleMsg(m){
+  switch(m.type){
+    case 'joined':
+      myRole=m.role;roomId=m.roomId;isCreator=m.playerIndex===0;
+      gameMode=m.mode||2;names={...DEFAULT_NAMES,...(m.names||{})};
+      selectedSkills=[];myEquipped=[];
+      document.getElementById('room-code-display');// just ensure room screen renders
+      if(!isCreator)selectedSkills=[]; // reset for new room
+      showScreen('room');
+      break;
+    case 'roomUpdate':
+      names={...DEFAULT_NAMES,...(m.names||{})};gameMode=m.mode||2;
+      // Update equipped display
+      if(m.equipped&&m.equipped[myRole]) myEquipped=m.equipped[myRole];
+      buildRoomUI(m);
+      break;
+    case 'gameStart':
+      snap=m.snapshot;names={...DEFAULT_NAMES,...(m.names||{})};gameMode=m.mode||2;
+      myEquipped=(snap.equipped&&snap.equipped[myRole])||[];
+      showScreen('game');notify('对弈开始！','info');
+      addSystemChat('对弈开始！');
+      break;
+    case 'update':case 'skill':case 'nova':
+      if(m.snapshot){
+        const prev=snap?snap.board:null;snap=m.snapshot;
+        if(prev)detectChanges(prev,snap.board);
+        if(m.devoured&&m.devoured.length){notify(`吞噬！${m.devoured.length}子转化`,'info');addSystemChat(`吞噬！${m.devoured.length}子被转化`);}
+        if(m.destroyed){notify(`超新星！${m.destroyed.length}子湮灭`,'info');addSystemChat(`超新星爆发！${m.destroyed.length}子湮灭`);}
+        if(m.skill==='stillwater'&&m.target){notify(`${names[m.target]}被静如止水跳过`,'info');addSystemChat(`${names[m.player]||'?'}对 ${names[m.target]||'?'} 使用了「静如止水」`);}
+        if(m.skill==='mountain'&&m.winner){notify(`${names[m.winner]||'?'}力拔山兮！`,'info');addSystemChat(`${names[m.winner]||'?'} 使用了「力拔山兮」，直接获胜！`);}
+        if(m.skill==='swap'&&m.player){addSystemChat(`${names[m.player]||'?'} 使用了「偷梁换柱」，将 (${m.r+1},${m.c+1}) 变为己方3回合`);}
+        if(m.skill==='move'&&m.player){addSystemChat(`${names[m.player]||'?'} 使用了「斗转星移」，移动了棋子`);}
+        if(m.skill==='ambush'&&m.player){
+        // 只对使用者自己显示通知，对手不知道
+        if(m.player===myRole) addSystemChat(`你启动了「暗度陈仓」，现在下假棋子（对手可见但不计胜利）`);
+      }
+        if(m.skill==='sandstorm'&&m.pending&&m.player){addSystemChat(`${names[m.player]||'?'} 使用了「飞沙走石」...`);}
+        // 暗度陈仓完成时的通知
+        if(m.ambushComplete){
+          // 检查是否有真棋子是自己的（在 ambushHidden 中）
+          let isMyAmbush = false;
+          for(const key of Object.keys(snap.ambushHidden||{})){
+            if(!key.startsWith('fake_') && snap.ambushHidden[key]===myRole){
+              isMyAmbush = true;
+              break;
+            }
+          }
+          if(isMyAmbush){
+            // 使用者看到完成提示
+            addSystemChat(`暗度陈仓完成！假棋子和真棋子都已落下`);
+          }else{
+            // 对手看到的是"对手落下一子"，不知道是暗度陈仓
+            // 找出是谁下的（通过 fakePos 的 ambushHidden 值）
+            const fakeOwner = snap.ambushHidden[`fake_${m.fakePos[0]}_${m.fakePos[1]}`];
+            if(fakeOwner) addSystemChat(`${names[fakeOwner]||'对手'} 下一子`);
+          }
+        }
+        updateGameUI(); // 强制刷新UI，更新回合指示器
+      }
+      break;
+    case 'ambushFake':
+      if(m.snapshot)snap=m.snapshot;
+      // 假棋子对手可见，但不知道是暗度陈仓
+      if(m.player===myRole){
+        addSystemChat(`你落下了假棋子（对手可见但不计胜利），现在下真棋子（对手不可见）`);
+      }else{
+        // 对手看到棋子落下，不知道是暗度陈仓的假棋子
+        addSystemChat(`${names[m.player]||'对手'} 落下一子`);
+      }
+      updateGameUI(); // 强制刷新UI
+      break;
+    case 'skillPending':
+      if(m.skill==='sandstorm'&&m.player){
+        notify(`${names[m.player]||'?'}使用飞沙走石！`,'warn');
+        addSystemChat(`${names[m.player]||'?'} 使用了「飞沙走石」...`);
+        // 只有装备了擒拿技能才显示打断提示
+        if(m.player!==myRole && myEquipped.includes('intercept')) showInterceptBanner();
+      }
+      break;
+    case 'skillApplied':
+      if(m.snapshot)snap=m.snapshot;
+      notify('飞沙走石生效','info');
+      addSystemChat(`飞沙走石生效，(${m.r+1},${m.c+1}) 棋子移除`);
+      removeInterceptBanner();
+      updateGameUI();
+      break;
+    case 'intercept':
+      if(m.snapshot)snap=m.snapshot;
+      notify('擒拿！飞沙走石被打断','warn');
+      addSystemChat(`${names[m.interceptor]||'?'} 使用「擒拿」打断了飞沙走石！`);
+      removeInterceptBanner();
+      updateGameUI();
+      break;
+    case 'restarted':
+      snap=m.snapshot;names={...DEFAULT_NAMES,...(m.names||{})};gameMode=m.mode||2;
+      myEquipped=(snap.equipped&&snap.equipped[myRole])||[];
+      ripples=[];particles=[];winGlow=0;sandstormMode=false;swapMode=false;moveFromMode=false;moveFrom=null;
+      document.getElementById('overlay').classList.remove('show');
+      document.getElementById('nova-btn').style.display='none';
+      notify('新一局开始','info');addSystemChat('新一局开始');
+      break;
+    case 'playerLeft':if(m.snapshot)snap=m.snapshot;notify(`${names[m.role]||'?'}已离开`,'info');break;
+    case 'restartRequested':notify('对手请求重新开始','info');break;
+    case 'chat':addChat(m.from,m.text);break;
+    case 'ambushExposed':
+      if(m.snapshot)snap=m.snapshot;
+      notify(`${names[m.owner]||'?'}的暗度陈仓被揭露！`,'warn');
+      addSystemChat(`${names[m.owner]||'?'} 的「暗度陈仓」真棋子被发现，假棋子已清除！`);
+      updateGameUI();
+      break;
+    case 'undoRequestPending':
+      if(m.from!==myRole){
+        showUndoBanner(m.from);
+        addSystemChat(`${names[m.from]||'对手'} 请求悔棋`);
+      }else{
+        notify('悔棋请求已发送','info');
+      }
+      break;
+    case 'undoAccepted':
+      if(m.snapshot)snap=m.snapshot;
+      notify('悔棋成功','info');
+      addSystemChat(`${names[m.from]||'对手'} 同意悔棋`);
+      removeUndoBanner();
+      updateGameUI();
+      break;
+    case 'undoRejected':
+      notify('悔棋被拒绝','warn');
+      addSystemChat(`${names[m.from]||'对手'} 拒绝悔棋`);
+      removeUndoBanner();
+      break;
+    case 'error':notify(m.message||'错误','error');break;
+  }
+  if(snap&&document.getElementById('game').classList.contains('show'))updateGameUI();
+}
+
+// ═══════════════════════════════════════
+//  Room UI (rebuilt each update)
+// ═══════════════════════════════════════
+function buildRoomUI(m){
+  lastRoomUpdate=m; // 缓存房间状态
+  const count=gameMode;const roles=count===3?[P1,P2,P3]:[P1,P2];
+  const equipped=m.equipped||{};
+  // 使用本地 selectedSkills 判断选中状态（而不是服务器返回的）
+  const mySelectedSkills=selectedSkills.length>0?selectedSkills:(equipped[myRole]||[]);
+
+  let html=`<h2>战前准备</h2>
+    <div class="room-code-area">
+      <div class="code" id="room-code-display">${roomId||'-----'}</div>
+      <div class="hint">将房间号告知对手</div>
+      <button class="copy-btn" onclick="copyCode()">复制</button>
+    </div>`;
+
+  // Players
+  html+=`<div class="players-row">`;
+  for(let i=0;i<count;i++){
+    const role=roles[i];const css=PSCSS[role];const filled=m.players[i];const nm=names[role]||DEFAULT_NAMES[role];
+    const eq=equipped[role]||[];const eqStr=eq.length?eq.map(s=>ALL_SKILLS.find(a=>a.id===s)?.name||s).join(' + '):'未选择';
+    html+=`<div class="player-slot ${css} ${filled?'filled':'pc-empty'}">
+      <div class="icon"></div>
+      <div class="name-label">${esc(nm)}</div>
+      <div class="wait">${filled?'已加入':'等待...'}</div>
+      <div class="equipped-label">${eqStr}</div>
+    </div>`;
+  }
+  html+=`</div>`;
+
+  // Skill selection — only for my role
+  html+=`<div class="skill-select-section">
+    <h3>选择技能 (选2个)</h3>
+    <div class="skill-grid">`;
+  for(const sk of ALL_SKILLS){
+    const isSel=mySelectedSkills.includes(sk.id);
+    html+=`<div class="skill-pick ${isSel?'selected':''}"
+      onclick="toggleSkillPick('${sk.id}')" ontouchend="event.preventDefault();toggleSkillPick('${sk.id}')">
+      <div class="sp-name">${sk.name}</div>
+      <div class="sp-desc">${sk.desc}</div>
+      <div class="sp-type">${sk.type==='passive'?'被动':'主动'}</div>
+    </div>`;
+  }
+  html+=`</div></div>`;
+
+  // Settings
+  html+=`<div class="settings-section"><h3>全局法则 (创建者可调整)</h3>`;
+  const sLabels={devour:'吞噬',decay:'衰变',nova:'超新星',rift:'裂隙'};
+  const sDescs={devour:'三面被围即转化',decay:'12手后化为废墟',nova:'四连珠可引爆清场',rift:'每5手随机封锁'};
+  for(const [k,v] of Object.entries(m.settings)){
+    html+=`<div class="setting-row"><span class="label">${sLabels[k]} — ${sDescs[k]}</span>
+      <button class="toggle ${v?'on':''}" data-key="${k}" onclick="toggleSetting(this)" ${isCreator?'':'disabled'}></button></div>`;
+  }
+  html+=`</div>`;
+
+  // Start
+  const allJoined=m.players.slice(0,count).every(Boolean);
+  const allEquipped=roles.every(r=>(equipped[r]&&equipped[r].length>=2));
+  const btn=document.getElementById('start-btn');
+  const canStart=allJoined&&allEquipped;
+  html+=`<button class="start-btn" onclick="startGame()" ${canStart&&isCreator?'':'disabled'}>${!allJoined?'等待玩家加入...':!allEquipped?'等待所有人选择2个技能...':isCreator?'开始对弈':'等待创建者开始...'}</button>`;
+
+  document.getElementById('room-box').innerHTML=html;
+}
+
+function toggleSkillPick(id){
+  const idx=selectedSkills.indexOf(id);
+  if(idx>=0) selectedSkills.splice(idx,1);
+  else if(selectedSkills.length<2) selectedSkills.push(id);
+  else{ notify('最多选2个技能','error');return; }
+  send({type:'equipSkills',skills:selectedSkills});
+  // 强制刷新UI以显示最新选中状态
+  buildRoomUI(lastRoomUpdate||{});
+}
+
+function toggleSetting(el){
+  if(!isCreator)return;el.classList.toggle('on');
+  send({type:'toggleSetting',key:el.dataset.key});
+}
+function startGame(){send({type:'startGame'})}
+
+// ═══════════════════════════════════════
+//  Game actions
+// ═══════════════════════════════════════
+function getRoles(){return gameMode===3?[P1,P2,P3]:[P1,P2]}
+function requestRestart(){send({type:'restart'});notify('已请求重新开始','info')}
+function requestUndo(){send({type:'undoRequest'});notify('已请求悔棋','info')}
+function acceptUndo(){send({type:'undoResponse',accepted:true});removeUndoBanner()}
+function rejectUndo(){send({type:'undoResponse',accepted:false});removeUndoBanner()}
+function showUndoBanner(from){
+  const c=document.getElementById('undo-container');
+  c.innerHTML=`<div class="undo-banner"><h3>悔棋请求</h3><p>${names[from]||'对手'} 请求悔棋，是否同意？</p>
+    <div class="undo-btns">
+      <button class="undo-btn" onclick="acceptUndo()">同意</button>
+      <button class="undo-btn reject" onclick="rejectUndo()">拒绝</button>
+    </div></div>`;
+}
+function removeUndoBanner(){document.getElementById('undo-container').innerHTML=''}
+function triggerSupernova(){send({type:'supernova'})}
+function triggerIntercept(){send({type:'intercept'});removeInterceptBanner()}
+
+function useSkill(skill,extra){
+  if(!snap||snap.gameOver)return;
+  if(snap.currentPlayer!==myRole)return;
+  if(snap.pendingSkill)return;
+  send({type:'useSkill',skill,...extra});
+}
+
+function enterSandstormMode(){sandstormMode=true;swapMode=false;moveFromMode=false;bCvs.classList.add('target-mode','sandstorm');notify('点击要移除的棋子','warn')}
+function enterSwapMode(){swapMode=true;sandstormMode=false;moveFromMode=false;bCvs.classList.add('target-mode','sandstorm');notify('点击要转化的敌方棋子','warn')}
+function enterMoveMode(){moveFromMode=true;sandstormMode=false;swapMode=false;bCvs.classList.add('target-mode','sandstorm');notify('点击要移动的棋子','warn')}
+function cancelTargetMode(){sandstormMode=false;swapMode=false;moveFromMode=false;moveFrom=null;bCvs.classList.remove('target-mode','sandstorm')}
+
+function useStillwater(){const sel=document.getElementById('stillwater-target');if(!sel)return;useSkill('stillwater',{target:parseInt(sel.value)})}
+function useAmbush(){useSkill('ambush',{})}
+
+function showInterceptBanner(){
+  const c=document.getElementById('intercept-container');
+  c.innerHTML=`<div class="intercept-banner"><h3>飞沙走石</h3><p>是否使用「擒拿」打断？</p>
+    <button class="intercept-btn" onclick="triggerIntercept()">擒拿打断</button>
+    <div class="intercept-timer"><div class="intercept-timer-fill" id="intercept-fill" style="width:100%"></div></div></div>`;
+  requestAnimationFrame(()=>{const f=document.getElementById('intercept-fill');if(f){f.style.transition='width 1.2s linear';requestAnimationFrame(()=>{if(f)f.style.width='0%'})}});
+}
+function removeInterceptBanner(){document.getElementById('intercept-container').innerHTML=''}
+
+// Chat
+function sendChat(){const i=document.getElementById('chat-input');const t=i.value.trim();if(!t)return;send({type:'chat',text:t});addChat(myRole,t,true);i.value=''}
+function addChat(from,text,isSelf){const el=document.getElementById('chat-messages');if(!el)return;el.innerHTML+=`<div style="${isSelf?'opacity:.55':'opacity:1'}"><span style="color:rgb(${PC[from]||'200,200,200'})">${esc(names[from]||'?')}</span>: ${esc(text)}</div>`;el.scrollTop=el.scrollHeight}
+function addSystemChat(text){const el=document.getElementById('chat-messages');if(!el)return;el.innerHTML+=`<div style="opacity:.45;font-style:italic"><span style="color:#998877">⚔</span> ${esc(text)}</div>`;el.scrollTop=el.scrollHeight}
+function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+
+// ═══════════════════════════════════════
+//  Game UI
+// ═══════════════════════════════════════
+function updateGameUI(){
+  if(!snap)return;
+  const bar=document.getElementById('info-bar');let h='';
+  for(const r of getRoles()){
+    const css=PCSS[r];const act=snap.currentPlayer===r&&!snap.gameOver?'active':'';
+    const me=r===myRole?'me':'';
+    h+=`<div class="player-ind ${css} ${act} ${me}"><div class="dot ${css}"></div><span>${esc(names[r]||'?')}</span><span class="score-text">${snap.scores[r]||0}</span></div>`;
+  }
+  bar.innerHTML=h;
+  document.getElementById('move-count').textContent=`第 ${snap.totalMoves} 手`;
+
+  if(snap.novaLine&&snap.novaLine.player===myRole)showNovaBtn(snap.novaLine.cells);
+  else document.getElementById('nova-btn').style.display='none';
+
+  buildSidePanel();
+
+  // Win
+  if(snap.gameOver&&!document.getElementById('overlay').classList.contains('show')){
+    let winner=null,sub='';
+    if(snap.winCells&&snap.winCells.length>0){
+      winner=snap.board[snap.winCells[0][0]][snap.winCells[0][1]];
+      sub=winner===P1?'宇宙归于秩序':winner===P2?'宇宙归于混沌':'宇宙归于平衡';
+      for(const [wr,wc] of snap.winCells){const wx=pad+wc*cellSize,wy=pad+wr*cellSize;
+        for(let i=0;i<10;i++){const a=Math.random()*Math.PI*2,sp=Math.random()*2.5+1;particles.push({x:wx,y:wy,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp-1,r:Math.random()*3+1,life:1,color:PC[winner]});}}
+    } else {for(const r of getRoles()){if(snap.scores[r]>0)winner=r;}sub='山岳崩颓，天地翻覆';}
+    if(winner){document.getElementById('winner-text').textContent=`${names[winner]||'某方'} 胜`;document.getElementById('winner-sub').textContent=sub;setTimeout(()=>document.getElementById('overlay').classList.add('show'),600);}
+  }
+}
+
+function buildSidePanel(){
+  if(!snap||!myRole)return;
+  const s=snap;const isMyTurn=s.currentPlayer===myRole&&!s.gameOver&&!s.pendingSkill;
+  const eq=s.equipped[myRole]||[];const ss=s.skillState[myRole]||{};
+  let html='';
+
+  // Global rules
+  html+=`<div class="card"><h3>全局法则</h3>`;
+  const gL={devour:'吞噬',decay:'衰变',nova:'超新星',rift:'裂隙'};
+  const gD={devour:'三面被围即转化',decay:'12手后化为废墟',nova:'四连珠可引爆',rift:'每5手随机封锁'};
+  for(const [k,v] of Object.entries(s.globalSettings)){html+=`<div style="margin-bottom:2px;opacity:${v?.6:.18}"><b>${gL[k]}</b> <span style="opacity:.45;font-size:8px">${gD[k]}</span></div>`;}
+  html+=`</div>`;
+
+  // My skills
+  html+=`<div class="card"><h3>我的技能</h3>`;
+  for(const sid of eq){
+    const sk=ALL_SKILLS.find(a=>a.id===sid);if(!sk)continue;
+    const skInfo=ss[sid];
+    const disabled=!isMyTurn||(sid==='move'&&skInfo>0)||(sid==='mountain'&&s.totalMoves<50);
+    let btnHtml='';
+
+    if(sid==='sandstorm'){
+      btnHtml=`<button class="skill-btn s_sandstorm" onclick="enterSandstormMode()" ${disabled?'disabled':''}>选择目标</button>`;
+    }else if(sid==='stillwater'){
+      btnHtml=`<select id="stillwater-target" style="width:100%;padding:2px;border-radius:3px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.03);color:#d8d0c4;font-size:9px;margin-top:3px">`;
+      for(const p of getRoles()){if(p===myRole)continue;btnHtml+=`<option value="${p}">${esc(names[p]||'?')}</option>`;}
+      btnHtml+=`</select><button class="skill-btn s_stillwater" onclick="useStillwater()" ${disabled?'disabled':''}>施放</button>`;
+    }else if(sid==='intercept'){
+      btnHtml=`<span style="font-size:9px;opacity:.4">被动 — 自动响应</span>`;
+    }else if(sid==='mountain'){
+      if(s.totalMoves<50) btnHtml=`<span style="font-size:9px;opacity:.25">还需 ${50-s.totalMoves} 回合</span>`;
+      else btnHtml=`<button class="skill-btn s_mountain" onclick="useSkill('mountain')" ${disabled?'disabled':''}>力拔山兮！</button>`;
+    }else if(sid==='swap'){
+      btnHtml=`<button class="skill-btn s_swap" onclick="enterSwapMode()" ${disabled?'disabled':''}>选择敌方棋子</button>`;
+    }else if(sid==='move'){
+      if(skInfo>0) btnHtml=`<span class="cooldown">冷却 ${skInfo} 回合</span>`;
+      else btnHtml=`<button class="skill-btn s_move" onclick="enterMoveMode()" ${disabled?'disabled':''}>选择棋子</button>`;
+    }else if(sid==='impervious'){
+      btnHtml=`<span style="font-size:9px;opacity:.4">被动 — 己方棋子免疫技能</span>`;
+    }else if(sid==='ambush'){
+      btnHtml=`<button class="skill-btn s_ambush" onclick="useAmbush()" ${disabled?'disabled':''}>暗度陈仓</button>`;
+    }
+
+    html+=`<div class="skill-card"><h4 style="color:${skillColor(sid)}">${sk.name} <span style="font-size:8px;opacity:.3">${sk.type==='passive'?'被动':'主动'}</span></h4>
+      <p>${sk.desc}</p>${btnHtml}</div>`;
+  }
+  html+=`</div>`;
+
+  // Swap tracking
+  if(s.swapMap&&Object.keys(s.swapMap).length>0){
+    html+=`<div class="card"><h3>偷梁换柱</h3>`;
+    for(const [key,val] of Object.entries(s.swapMap)){
+      const [r,c]=key.split(',');
+      html+=`<p>(${+r+1},${+c+1}) ${names[val.owner]}→${names[s.board[+r][+c]]} 剩${val.turnsLeft}回合</p>`;
+    }
+    html+=`</div>`;
+  }
+
+  // Ambush state - 显示当前阶段提示
+  if(s.ambushPhase==='fake'&&s.ambushPlayer===myRole){
+    html+=`<div class="card" style="border-color:rgba(80,200,120,.2)"><h3 style="color:#55cc77">暗度陈仓</h3><p>技能已启动！请点击棋盘下<strong>假棋子</strong>（可见但不参与胜利）</p></div>`;
+  }
+  if(s.ambushPhase==='real'&&s.ambushPlayer===myRole){
+    html+=`<div class="card" style="border-color:rgba(80,200,120,.2)"><h3 style="color:#55cc77">暗度陈仓</h3><p>假棋已落！请点击<strong>其他空位</strong>下真棋子（对手不可见）</p></div>`;
+  }
+
+  // Chat
+  html+=`<div class="chat-box"><h3>对话</h3><div class="chat-messages" id="chat-messages"></div>
+    <div class="chat-input-row"><input class="chat-input" id="chat-input" placeholder="..." maxlength="200" onkeydown="if(event.key==='Enter')sendChat()">
+    <button class="chat-send" onclick="sendChat()">发</button></div></div>`;
+
+  const chatEl=document.getElementById('chat-messages');const chatHTML=chatEl?chatEl.innerHTML:'';
+  document.getElementById('side-panel').innerHTML=html;
+  const nc=document.getElementById('chat-messages');if(nc){nc.innerHTML=chatHTML;nc.scrollTop=nc.scrollHeight}
+}
+
+function skillColor(sid){return{sandstorm:'#ffaa55',stillwater:'#66bbff',intercept:'#ff7766',mountain:'#ccaa55',swap:'#cc77ff',move:'#66ccff',impervious:'#aaa',ambush:'#55cc77'}[sid]||'#d8d0c4'}
+
+function showNovaBtn(cells){
+  const btn=document.getElementById('nova-btn');const midR=cells[Math.floor(cells.length/2)][0];const midC=cells[Math.floor(cells.length/2)][1];
+  const cr=bCvs.getBoundingClientRect();const pr=bCvs.parentElement.getBoundingClientRect();
+  btn.style.left=(cr.left-pr.left+pad+midC*cellSize-40)+'px';btn.style.top=(cr.top-pr.top+pad+midR*cellSize-28)+'px';btn.style.display='block';
+}
+
+// ═══════════════════════════════════════
+//  Board input
+// ═══════════════════════════════════════
+function getGridPos(e){
+  const rect=bCvs.getBoundingClientRect();let cx,cy;
+  if(e.clientX!==undefined){cx=e.clientX;cy=e.clientY;}
+  else if(e.touches&&e.touches[0]){cx=e.touches[0].clientX;cy=e.touches[0].clientY;}
+  else return null;
+  const c=Math.round((cx-rect.left-pad)/cellSize);const r=Math.round((cy-rect.top-pad)/cellSize);
+  if(r<0||r>=N||c<0||c>=N)return null;return{r,c};
+}
+
+bCvs.addEventListener('mousemove',e=>{hoverPos=getGridPos(e)});
+bCvs.addEventListener('mouseleave',()=>{hoverPos=null});
+bCvs.addEventListener('touchmove',e=>{e.preventDefault();hoverPos=getGridPos(e.touches[0])},{passive:false});
+bCvs.addEventListener('touchend',()=>{hoverPos=null});
+
+function handleBoardClick(pos){
+  if(!snap||snap.gameOver||!pos)return;
+  const roles=getRoles();
+
+  // Sandstorm mode
+  if(sandstormMode){
+    if(roles.includes(snap.board[pos.r][pos.c])){sandstormMode=false;bCvs.classList.remove('target-mode','sandstorm');useSkill('sandstorm',{r:pos.r,c:pos.c});}
+    else notify('请选择一枚棋子','error');
+    return;
+  }
+  // Swap mode
+  if(swapMode){
+    const target=snap.board[pos.r][pos.c];
+    if(roles.includes(target)&&target!==myRole){swapMode=false;bCvs.classList.remove('target-mode','sandstorm');useSkill('swap',{r:pos.r,c:pos.c});}
+    else notify('请选择敌方棋子','error');
+    return;
+  }
+  // Move from mode
+  if(moveFromMode&&!moveFrom){
+    if(roles.includes(snap.board[pos.r][pos.c])){moveFrom={r:pos.r,c:pos.c};notify('现在点击目标空位','info');}
+    else notify('请选择一枚棋子','error');
+    return;
+  }
+  // Move to
+  if(moveFromMode&&moveFrom){
+    if(snap.board[pos.r][pos.c]===EMPTY){
+      moveFromMode=false;bCvs.classList.remove('target-mode','sandstack');
+      useSkill('move',{fr:moveFrom.r,fc:moveFrom.c,tr:pos.r,tc:pos.c});moveFrom=null;
+    }else notify('目标必须为空位','error');
+    return;
+  }
+
+  if(snap.currentPlayer!==myRole)return;
+  if(snap.novaLine&&snap.novaLine.player===myRole){send({type:'dismissNova'});return;}
+  if(snap.pendingSkill)return;
+  if(snap.board[pos.r][pos.c]===EMPTY) send({type:'place',r:pos.r,c:pos.c});
+}
+
+bCvs.addEventListener('click',e=>{handleBoardClick(getGridPos(e))});
+bCvs.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  const pos=getGridPos(e.touches[0]);
+  handleBoardClick(pos);
+},{passive:false});
+
+// ═══════════════════════════════════════
+//  VFX
+// ═══════════════════════════════════════
+function detectChanges(prev,curr){
+  const roles=getRoles();
+  for(let r=0;r<N;r++) for(let c=0;c<N;c++){
+    if(prev[r][c]===curr[r][c])continue;
+    const x=pad+c*cellSize,y=pad+r*cellSize;
+    if(roles.includes(curr[r][c])){ripples.push({x,y,radius:cellSize*.35,alpha:.5,color:PC[curr[r][c]]});ripples.push({x,y,radius:cellSize*.15,alpha:.3,color:PC[curr[r][c]]});}
+    if(curr[r][c]===RIFT) ripples.push({x,y,radius:5,alpha:.6,color:'80,180,255'});
+    if(curr[r][c]===RUIN){for(let i=0;i<4;i++){const a=Math.random()*Math.PI*2,sp=Math.random()*1.5+.5;particles.push({x,y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,r:Math.random()*2+1,life:1,color:'150,150,150'});}}
+    if(roles.includes(prev[r][c])&&roles.includes(curr[r][c])&&prev[r][c]!==curr[r][c]){for(let i=0;i<6;i++){const a=Math.random()*Math.PI*2,sp=Math.random()*2+.8;particles.push({x,y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp-.5,r:Math.random()*2.5+1,life:1,color:PC[curr[r][c]]});}}
+    if(roles.includes(prev[r][c])&&curr[r][c]===EMPTY){for(let i=0;i<8;i++){const a=Math.random()*Math.PI*2,sp=Math.random()*2.5+1;particles.push({x,y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp-.8,r:Math.random()*3+1,life:1,color:PC[prev[r][c]]});}}
+  }
+}
+
+function notify(text,type){const c=document.getElementById('notif-container');const el=document.createElement('div');el.className='notif';const b={warn:'border-left:3px solid #ffaa55',error:'border-left:3px solid #ff5555',info:'border-left:3px solid #666'};el.style.cssText=b[type]||b.info;el.textContent=text;c.appendChild(el);setTimeout(()=>{el.classList.add('fade');setTimeout(()=>el.remove(),400)},2200)}
+
+// ═══════════════════════════════════════
+//  BG
+// ═══════════════════════════════════════
+let bgStars=[];
+function initBg(){bgCvs.width=innerWidth;bgCvs.height=innerHeight;bgStars=[];for(let i=0;i<80;i++)bgStars.push({x:Math.random()*bgCvs.width,y:Math.random()*bgCvs.height,r:Math.random()*1+.2,dx:(Math.random()-.5)*.06,dy:(Math.random()-.5)*.06,a:Math.random()*.25+.04,hue:[40,260,165][Math.floor(Math.random()*3)]})}
+function drawBg(t){bgCtx.clearRect(0,0,bgCvs.width,bgCvs.height);for(const s of bgStars){s.x+=s.dx;s.y+=s.dy;if(s.x<0)s.x=bgCvs.width;if(s.x>bgCvs.width)s.x=0;if(s.y<0)s.y=bgCvs.height;if(s.y>bgCvs.height)s.y=0;const fl=.5+.5*Math.sin(t*.0006+s.x*.008);bgCtx.beginPath();bgCtx.arc(s.x,s.y,s.r,0,Math.PI*2);bgCtx.fillStyle=`hsla(${s.hue},40%,66%,${s.a*fl})`;bgCtx.fill()}}
+
+// ═══════════════════════════════════════
+//  Sizing
+// ═══════════════════════════════════════
+function isMobile(){return innerWidth<=860}
+function calcSize(){const mb=isMobile();const maxH=innerHeight-(mb?160:100);const maxW=innerWidth-(mb?16:240);const m=Math.min(maxH,maxW,mb?innerWidth-16:540);cellSize=Math.max(Math.floor(m/(N+1)),14);pad=cellSize;boardPx=cellSize*(N-1)+pad*2;bCvs.width=boardPx;bCvs.height=boardPx;bCvs.style.width=boardPx+'px';bCvs.style.height=boardPx+'px'}
+
+// ═══════════════════════════════════════
+//  Drawing
+// ═══════════════════════════════════════
+function drawBoard(t){
+  bCtx.clearRect(0,0,boardPx,boardPx);if(!snap)return;
+  const{board,stoneAge,riftAge,currentPlayer,totalMoves,gameOver,winCells,novaLine,globalSettings,pendingSkill,swapMap}=snap;
+  const roles=getRoles();
+
+  const bg=bCtx.createRadialGradient(boardPx/2,boardPx/2,0,boardPx/2,boardPx/2,boardPx*.7);
+  bg.addColorStop(0,'#12121e');bg.addColorStop(1,'#0a0a14');bCtx.fillStyle=bg;bCtx.fillRect(0,0,boardPx,boardPx);
+
+  const breathe=.18+.04*Math.sin(t*.001);
+  bCtx.strokeStyle=`rgba(200,190,175,${breathe})`;bCtx.lineWidth=.7;
+  for(let i=0;i<N;i++){const p=pad+i*cellSize;bCtx.beginPath();bCtx.moveTo(p,pad);bCtx.lineTo(p,pad+(N-1)*cellSize);bCtx.stroke();bCtx.beginPath();bCtx.moveTo(pad,p);bCtx.lineTo(pad+(N-1)*cellSize,p);bCtx.stroke();}
+  bCtx.fillStyle=`rgba(200,190,175,${breathe*1.8})`;for(const r of [3,7,11])for(const c of [3,7,11]){bCtx.beginPath();bCtx.arc(pad+c*cellSize,pad+r*cellSize,2.5,0,Math.PI*2);bCtx.fill();}
+
+  // Hover
+  if(hoverPos&&!gameOver){
+    const hx=pad+hoverPos.c*cellSize,hy=pad+hoverPos.r*cellSize;
+    if(sandstormMode&&roles.includes(board[hoverPos.r][hoverPos.c])){bCtx.strokeStyle='rgba(255,150,60,0.6)';bCtx.lineWidth=2;bCtx.beginPath();bCtx.arc(hx,hy,cellSize*.48,0,Math.PI*2);bCtx.stroke();}
+    else if(swapMode&&roles.includes(board[hoverPos.r][hoverPos.c])&&board[hoverPos.r][hoverPos.c]!==myRole){bCtx.strokeStyle='rgba(200,100,255,0.6)';bCtx.lineWidth=2;bCtx.beginPath();bCtx.arc(hx,hy,cellSize*.48,0,Math.PI*2);bCtx.stroke();}
+    else if(moveFromMode){bCtx.strokeStyle='rgba(100,200,255,0.6)';bCtx.lineWidth=2;bCtx.beginPath();bCtx.arc(hx,hy,cellSize*.48,0,Math.PI*2);bCtx.stroke();}
+    else if(!sandstormMode&&!swapMode&&!moveFromMode&&currentPlayer===myRole&&board[hoverPos.r][hoverPos.c]===EMPTY){
+      const hc=PC[myRole];const hg=bCtx.createRadialGradient(hx,hy,0,hx,hy,cellSize*.6);
+      hg.addColorStop(0,`rgba(${hc},0.12)`);hg.addColorStop(1,`rgba(${hc},0)`);
+      bCtx.fillStyle=hg;bCtx.fillRect(hx-cellSize,hy-cellSize,cellSize*2,cellSize*2);
+      bCtx.globalAlpha=.25;drawStone(hx,hy,myRole,1,0,t);bCtx.globalAlpha=1;
+    }
+  }
+
+  // Pending skill
+  if(pendingSkill&&pendingSkill.type==='sandstorm'){const px=pad+pendingSkill.c*cellSize,py=pad+pendingSkill.r*cellSize;const pulse=.4+.3*Math.sin(t*.008);bCtx.strokeStyle=`rgba(255,150,60,${pulse})`;bCtx.lineWidth=2.5;bCtx.beginPath();bCtx.arc(px,py,cellSize*.52,0,Math.PI*2);bCtx.stroke();}
+
+  // Cells
+  for(let r=0;r<N;r++) for(let c=0;c<N;c++){
+    const x=pad+c*cellSize,y=pad+r*cellSize,v=board[r][c];
+    if(v===EMPTY)continue;
+    if(v===RUIN){drawRuin(x,y);continue;}
+    if(v===RIFT){drawRift(x,y,riftAge[r][c],t);continue;}
+    if(!roles.includes(v))continue;
+    const isWin=winCells&&winCells.some(w=>w[0]===r&&w[1]===c);
+    const glow=isWin?.6+.4*Math.sin(winGlow):0;
+    const age=stoneAge[r][c]||0;
+    const decayRatio=globalSettings.decay?Math.min(age/12,1):0;
+    
+    // 暗度陈仓假棋子判断：
+    // 1. 当前进行中的假棋子（ambushFakePos + ambushPlayer === myRole）
+    // 2. 已完成的假棋子（ambushFakePositions 中存在该位置且属于 myRole）
+    const isCurrentFake=snap.ambushFakePos&&snap.ambushFakePos[0]===r&&snap.ambushFakePos[1]===c&&snap.ambushPlayer===myRole;
+    const isCompletedFake=snap.ambushFakePositions&&snap.ambushFakePositions.some(fp=>fp[0]===r&&fp[1]===c&&fp[2]===myRole);
+    const isAmbushFake=isCurrentFake||isCompletedFake;
+    
+    // 暗度陈仓真棋子（只有自己能看到）
+    const ambushHiddenKey=`${r},${c}`;
+    const isAmbushReal=snap.ambushHidden&&snap.ambushHidden[ambushHiddenKey]===myRole;
+    
+    bCtx.globalAlpha=(1-decayRatio*.55)*(isAmbushFake?.35:1);
+    drawStone(x,y,v,1,glow,t);
+    
+    // 假棋子标记（虚线圈 + "假"字）
+    if(isAmbushFake){
+      bCtx.strokeStyle='rgba(150,150,150,0.4)';
+      bCtx.lineWidth=1.5;
+      bCtx.setLineDash([4,4]);
+      bCtx.beginPath();
+      bCtx.arc(x,y,cellSize*.46,0,Math.PI*2);
+      bCtx.stroke();
+      bCtx.setLineDash([]);
+      bCtx.fillStyle='rgba(150,150,150,0.6)';
+      bCtx.font=`${cellSize*.25}px sans-serif`;
+      bCtx.textAlign='center';
+      bCtx.textBaseline='middle';
+      bCtx.fillText('假',x,y);
+    }
+    // 真棋子标记（实线圈 + "真"字） - 不要同时显示假和真标记
+    if(isAmbushReal&&!isAmbushFake){
+      bCtx.strokeStyle='rgba(80,200,120,0.6)';
+      bCtx.lineWidth=1.5;
+      bCtx.beginPath();
+      bCtx.arc(x,y,cellSize*.46,0,Math.PI*2);
+      bCtx.stroke();
+      bCtx.fillStyle='rgba(80,200,120,0.8)';
+      bCtx.font=`${cellSize*.25}px sans-serif`;
+      bCtx.textAlign='center';
+      bCtx.textBaseline='middle';
+      bCtx.fillText('真',x,y);
+    }
+    
+    // Swap indicator
+    const swapKey=`${r},${c}`;
+    if(swapMap&&swapMap[swapKey]){bCtx.strokeStyle='rgba(200,100,255,0.5)';bCtx.lineWidth=1.5;bCtx.setLineDash([3,3]);bCtx.beginPath();bCtx.arc(x,y,cellSize*.46,0,Math.PI*2);bCtx.stroke();bCtx.setLineDash([]);}
+    if(decayRatio>.4&&!isAmbushFake)drawCracks(x,y,decayRatio);
+    bCtx.globalAlpha=1;
+    if(age>0&&!isAmbushFake){const angle=(age/12)*Math.PI*2;bCtx.beginPath();bCtx.arc(x,y,cellSize*.48,-Math.PI/2,-Math.PI/2+angle);bCtx.strokeStyle=`rgba(${PC[v]},${.15+decayRatio*.25})`;bCtx.lineWidth=1.5;bCtx.stroke();}
+  }
+
+  // Nova
+  if(novaLine&&!gameOver){const cells=novaLine.cells;const pulse=.3+.2*Math.sin(t*.005);bCtx.strokeStyle=`rgba(255,180,60,${pulse})`;bCtx.lineWidth=3;bCtx.shadowColor='#ffb43c';bCtx.shadowBlur=15;bCtx.beginPath();bCtx.moveTo(pad+cells[0][1]*cellSize,pad+cells[0][0]*cellSize);bCtx.lineTo(pad+cells[cells.length-1][1]*cellSize,pad+cells[cells.length-1][0]*cellSize);bCtx.stroke();bCtx.shadowBlur=0;}
+
+  // Win line
+  if(winCells&&winCells.length>=2){const f=winCells[0],l=winCells[winCells.length-1];const x1=pad+f[1]*cellSize,y1=pad+f[0]*cellSize,x2=pad+l[1]*cellSize,y2=pad+l[0]*cellSize;const wc=PC[board[winCells[0][0]][winCells[0][1]]];const lg=bCtx.createLinearGradient(x1,y1,x2,y2);lg.addColorStop(0,`rgba(${wc},0)`);lg.addColorStop(.5,`rgba(${wc},0.7)`);lg.addColorStop(1,`rgba(${wc},0)`);bCtx.strokeStyle=lg;bCtx.lineWidth=3;bCtx.shadowColor=`rgb(${wc})`;bCtx.shadowBlur=18;bCtx.beginPath();bCtx.moveTo(x1,y1);bCtx.lineTo(x2,y2);bCtx.stroke();bCtx.shadowBlur=0;}
+
+  // Ripples & particles
+  for(let i=ripples.length-1;i>=0;i--){const rp=ripples[i];rp.radius+=1;rp.alpha-=.01;if(rp.alpha<=0){ripples.splice(i,1);continue;}bCtx.beginPath();bCtx.arc(rp.x,rp.y,rp.radius,0,Math.PI*2);bCtx.strokeStyle=`rgba(${rp.color},${rp.alpha})`;bCtx.lineWidth=1;bCtx.stroke();}
+  for(let i=particles.length-1;i>=0;i--){const p=particles[i];p.x+=p.vx;p.y+=p.vy;p.vy+=.015;p.life-=.01;if(p.life<=0){particles.splice(i,1);continue;}bCtx.beginPath();bCtx.arc(p.x,p.y,p.r*p.life,0,Math.PI*2);bCtx.fillStyle=`rgba(${p.color},${p.life*.7})`;bCtx.fill();}
+}
+
+function drawStone(x,y,type,scale,glow,t){
+  const r=cellSize*.4*scale;bCtx.save();
+  const sc={[P1]:'#ffd89b',[P2]:'#7a5fff',[P3]:'#50e8c0'};
+  if(glow>0){bCtx.shadowColor=sc[type]||'#fff';bCtx.shadowBlur=20*glow;}
+  const gs={[P1]:[['#fffdf5',.08],['#ffd89b',.4],['#c9963a',.85],['#8a6420',1]],[P2]:[['#b39dff',.05],['#7a5fff',.35],['#3a1f9e',.8],['#120838',1]],[P3]:[['#d0fff0',.08],['#50e8c0',.35],['#1a9e7a',.8],['#0a4a3a',1]]};
+  const gd=gs[type]||gs[P1];const g=bCtx.createRadialGradient(x-r*.2,y-r*.2,r*.05,x,y,r);for(const[cl,st]of gd)g.addColorStop(st,cl);
+  bCtx.fillStyle=g;bCtx.beginPath();bCtx.arc(x,y,r,0,Math.PI*2);bCtx.fill();
+  const sh=.1+.07*Math.sin((t||0)*.003+x+y);
+  const stc={[P1]:`rgba(255,240,200,${sh})`,[P2]:`rgba(180,160,255,${sh})`,[P3]:`rgba(160,255,224,${sh})`};
+  bCtx.strokeStyle=stc[type]||stc[P1];bCtx.lineWidth=.7;bCtx.stroke();
+  if(type===P2){const cg=bCtx.createRadialGradient(x,y,0,x,y,r*.35);cg.addColorStop(0,'rgba(0,0,0,0.35)');cg.addColorStop(1,'rgba(0,0,0,0)');bCtx.fillStyle=cg;bCtx.beginPath();bCtx.arc(x,y,r*.35,0,Math.PI*2);bCtx.fill();}
+  if(type===P3){const cg=bCtx.createRadialGradient(x,y,0,x,y,r*.35);cg.addColorStop(0,'rgba(0,40,30,0.3)');cg.addColorStop(1,'rgba(0,40,30,0)');bCtx.fillStyle=cg;bCtx.beginPath();bCtx.arc(x,y,r*.35,0,Math.PI*2);bCtx.fill();}
+  bCtx.restore();
+}
+
+function drawCracks(x,y,ratio){const r=cellSize*.4,intensity=(ratio-.4)/.6;bCtx.save();bCtx.globalAlpha=intensity*.6;bCtx.strokeStyle='#888';bCtx.lineWidth=.5;const seed=Math.floor(x*7+y*13);for(let i=0;i<3;i++){const a=(seed+i*2.1)%6.28;const len=r*(.3+intensity*.5);bCtx.beginPath();bCtx.moveTo(x+Math.cos(a)*r*.15,y+Math.sin(a)*r*.15);bCtx.lineTo(x+Math.cos(a)*len,y+Math.sin(a)*len);bCtx.stroke();}bCtx.restore();}
+function drawRuin(x,y){const r=cellSize*.4;bCtx.save();bCtx.globalAlpha=.7;const g=bCtx.createRadialGradient(x,y,0,x,y,r);g.addColorStop(0,'#8a7a6a');g.addColorStop(.3,'#6a5a4a');g.addColorStop(.7,'#4a3a2a');g.addColorStop(1,'#2a1a0a');bCtx.fillStyle=g;bCtx.beginPath();bCtx.arc(x,y,r,0,Math.PI*2);bCtx.fill();
+  // 多条裂缝
+  bCtx.strokeStyle='#3a2a1a';bCtx.lineWidth=1.2;
+  const cracks=[[x-r*.6,y-r*.2,x+r*.3,y+r*.5],[x+r*.4,y-r*.6,x-r*.3,y+r*.3],[x-r*.2,y-r*.7,x+r*.5,y+r*.2],[x+r*.7,y,x-r*.4,y+r*.4]];
+  for(const [x1,y1,x2,y2] of cracks){bCtx.beginPath();bCtx.moveTo(x1,y1);bCtx.lineTo(x2,y2);bCtx.stroke();}
+  // 中心废墟标记
+  bCtx.fillStyle='#2a1a0a';bCtx.beginPath();bCtx.arc(x,y,r*.15,0,Math.PI*2);bCtx.fill();
+  bCtx.restore();}
+function drawRift(x,y,age,t){const r=cellSize*.38;const phase=t*.003+(age||0)*.5;const pulse=.6+.3*Math.sin(phase*2);bCtx.save();bCtx.globalAlpha=pulse*(1-(age||0)/4*.4);for(let i=0;i<3;i++){const a=phase+i*Math.PI*2/3;const ir=r*(.3+i*.2);bCtx.beginPath();bCtx.arc(x+Math.cos(a)*3,y+Math.sin(a)*3,ir,0,Math.PI*2);bCtx.strokeStyle=`hsla(${220+i*30},70%,65%,${.3-i*.08})`;bCtx.lineWidth=1.2-i*.3;bCtx.stroke();}const cg=bCtx.createRadialGradient(x,y,0,x,y,r*.5);cg.addColorStop(0,'rgba(80,180,255,0.25)');cg.addColorStop(1,'rgba(80,180,255,0)');bCtx.fillStyle=cg;bCtx.beginPath();bCtx.arc(x,y,r*.5,0,Math.PI*2);bCtx.fill();bCtx.strokeStyle=`rgba(80,180,255,${.12*pulse})`;bCtx.lineWidth=.8;bCtx.setLineDash([3,5]);bCtx.beginPath();bCtx.arc(x,y,r+3,0,Math.PI*2);bCtx.stroke();bCtx.setLineDash([]);bCtx.restore();}
+
+// ═══════════════════════════════════════
+//  Loop & Init
+// ═══════════════════════════════════════
+function loop(t){drawBg(t);if(snap&&snap.winCells&&snap.winCells.length>0)winGlow+=.07;drawBoard(t);requestAnimationFrame(loop)}
+function init(){initBg();calcSize();connectWS();requestAnimationFrame(loop)}
+window.addEventListener('resize',()=>{initBg();calcSize()});
+document.addEventListener('touchend',e=>{if(e.target.tagName!=='INPUT'&&e.target.tagName!=='SELECT'&&e.target.tagName!=='BUTTON')e.preventDefault()},{passive:false});
+init();
+</script>
+</body>
+</html>
