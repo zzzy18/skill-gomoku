@@ -225,6 +225,10 @@ function getMediumMove(room, aiRole, humanRole) {
   const candidates = getCandidates(board);
   if (candidates.length === 0) return { action: 'place', r: 7, c: 7 };
 
+  // Blood mode: more aggressive — weight attack higher
+  const isBlood = room.gameMode === 'blood';
+  const atkWeight = isBlood ? 1.4 : 1.1;
+
   let bestScore = -Infinity;
   let bestMove = candidates[0];
 
@@ -237,7 +241,7 @@ function getMediumMove(room, aiRole, humanRole) {
     const center = (N - 1) / 2;
     const distScore = (7 - Math.abs(r - center) - Math.abs(c - center)) * 5;
 
-    const total = attackScore * 1.1 + defenseScore + distScore;
+    const total = attackScore * atkWeight + defenseScore + distScore;
     if (total > bestScore) {
       bestScore = total;
       bestMove = [r, c];
@@ -268,10 +272,12 @@ function getHardMove(room, aiRole, humanRole) {
   }
 
   // 对候选位置打分排序，只搜索前15
+  const isBlood = room.gameMode === 'blood';
+  const atkWeight = isBlood ? 1.4 : 1.1;
   const scored = candidates.map(([r, c]) => {
     const atk = evaluateMove(board, r, c, aiRole);
     const def = evaluateMove(board, r, c, humanRole);
-    return { r, c, score: atk * 1.1 + def };
+    return { r, c, score: atk * atkWeight + def };
   });
   scored.sort((a, b) => b.score - a.score);
   const topCandidates = scored.slice(0, 15);
@@ -405,11 +411,37 @@ function aiSandstorm(room, aiRole, humanRole) {
   return bestPos;
 }
 
-// 静如止水：选择威胁最大的对手跳过
-function aiStillwater(room, aiRole) {
-  // 1v1只有一个对手
-  const humanRole = room.roles.find(r => r !== aiRole);
-  return humanRole || null;
+// 移形换影：选择交换价值最高的组合（己方低价值棋子 ↔ 对手高价值棋子）
+function aiSwapPos(room, aiRole, humanRole) {
+  const board = room.board;
+  let bestScore = -1;
+  let bestSwap = null;
+
+  for (let myR = 0; myR < N; myR++) {
+    for (let myC = 0; myC < N; myC++) {
+      if (board[myR][myC] !== aiRole) continue;
+      if (isImpervious(room, myR, myC)) continue;
+      const myValue = scorePosition(board, myR, myC, aiRole);
+
+      for (let opR = 0; opR < N; opR++) {
+        for (let opC = 0; opC < N; opC++) {
+          if (board[opR][opC] !== humanRole) continue;
+          if (isImpervious(room, opR, opC)) continue;
+          const opValue = scorePosition(board, opR, opC, humanRole);
+
+          // Simulate swap: how much better is the opponent's position for us?
+          // And how much does removing our low-value piece hurt us?
+          const swapBenefit = opValue - myValue * 0.3;
+          if (swapBenefit > bestScore) {
+            bestScore = swapBenefit;
+            bestSwap = { myR, myC, opR, opC, opValue };
+          }
+        }
+      }
+    }
+  }
+
+  return bestSwap;
 }
 
 // 偷梁换柱：选择关键位置的敌方棋子转化
@@ -557,9 +589,14 @@ function shouldUseSkill(room, aiRole, difficulty) {
     bestPlaceScore = Math.max(bestPlaceScore, atk * 1.1 + def);
   }
 
-  // 力拔山兮：回合≥50直接获胜（任何难度）
+  // 力拔山兮：回合≥50直接获胜（经典模式）或+3分（血战模式）
   if (equipped.includes('mountain') && room.totalMoves >= 50) {
-    return { action: 'skill', skill: 'mountain' };
+    if (room.gameMode !== 'blood') return { action: 'skill', skill: 'mountain' };
+    // Blood mode: use mountain if it would win or if close to target
+    const currentBloodScore = room.bloodScores[aiRole] || 0;
+    if (currentBloodScore + 3 >= (room.targetScore || 5)) return { action: 'skill', skill: 'mountain' };
+    // Otherwise still use it if no better move
+    if (bestPlaceScore < SCORE.LIVE3) return { action: 'skill', skill: 'mountain' };
   }
 
   // 如果能直接赢或防住，优先落子
@@ -594,23 +631,14 @@ function shouldUseSkill(room, aiRole, difficulty) {
       }
     }
 
-    // 静如止水：对手有活三或冲四威胁时跳过
-    if (equipped.includes('stillwater')) {
-      let hasThreat = false;
-      for (let r = 0; r < N && !hasThreat; r++) {
-        for (let c = 0; c < N && !hasThreat; c++) {
-          if (board[r][c] === humanRole) {
-            for (const [dr, dc] of DIRS) {
-              const { count, block } = analyzeDirection(board, r, c, dr, dc, humanRole);
-              // 扩展威胁判定：活三(block=0)或冲四(block<=1,count>=4)
-              if ((count >= 3 && block === 0) || (count >= 4 && block <= 1)) { hasThreat = true; break; }
-            }
-          }
+    // 移形换影：交换己方低价值与对手高价值棋子
+    if (equipped.includes('swapPos')) {
+      const ssSwap = ss.swapPos || 0;
+      if (ssSwap <= 0) {
+        const swapResult = aiSwapPos(room, aiRole, humanRole);
+        if (swapResult && swapResult.opValue >= SCORE.LIVE3) {
+          return { action: 'skill', skill: 'swapPos', myR: swapResult.myR, myC: swapResult.myC, opR: swapResult.opR, opC: swapResult.opC };
         }
-      }
-      if (hasThreat) {
-        const target = aiStillwater(room, aiRole);
-        if (target) return { action: 'skill', skill: 'stillwater', target };
       }
     }
 

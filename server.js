@@ -27,8 +27,8 @@ const DECAY_TURNS = 12, RIFT_INTERVAL = 5, RIFT_DURATION = 4;
 // All available skills
 const ALL_SKILLS = [
   {id:'sandstorm',   name:'飞沙走石', type:'active',  desc:'移除棋盘上一枚棋子并留下废墟，每5回合可用一次'},
-  {id:'stillwater',  name:'静如止水', type:'active',  desc:'选择一名角色跳过一个落子回合'},
-  {id:'intercept',   name:'擒拿',     type:'passive', desc:'当飞沙走石发动时可打断其效果'},
+  {id:'swapPos',    name:'移形换影', type:'active',  desc:'选择己方一枚棋子与对手一枚棋子交换位置，冷却4回合'},
+  {id:'intercept',   name:'擒拿',     type:'passive', desc:'当飞沙走石、偷梁换柱、移形换影发动时可打断其效果'},
   {id:'mountain',    name:'力拔山兮', type:'active',  desc:'回合≥50时直接获胜'},
   {id:'swap',        name:'偷梁换柱', type:'active',  desc:'将一枚棋子变为己方3回合，期间不计胜利'},
   {id:'move',        name:'斗转星移', type:'active',  desc:'移动任意一颗棋子到空位，冷却5回合'},
@@ -233,8 +233,11 @@ function handleAISkill(room, aiRole, decision, roomId, difficulty) {
       msg.r = decision.r;
       msg.c = decision.c;
       break;
-    case 'stillwater':
-      msg.target = decision.target;
+    case 'swapPos':
+      msg.myR = decision.myR;
+      msg.myC = decision.myC;
+      msg.opR = decision.opR;
+      msg.opC = decision.opC;
       break;
     case 'mountain':
       break;
@@ -283,8 +286,10 @@ function handleAISkill(room, aiRole, decision, roomId, difficulty) {
 
   // 飞沙走石是pending状态，等resolveSandstorm后再触发AI
   if (decision.skill === 'sandstorm') return;
+  // 偷梁换柱和移形换影也是pending状态，等resolve后再触发AI
+  if (decision.skill === 'swap' || decision.skill === 'swapPos') return;
 
-  // 检查是否又轮到AI（如stillwater跳过对手后）
+  // 检查是否又轮到AI
   if (room.aiMode && !room.gameOver && !room.pendingSkill) {
     const aiIdx = room.players.findIndex(p => p && p._isAI);
     if (aiIdx >= 0 && room.currentPlayer === room.roles[aiIdx]) {
@@ -302,7 +307,7 @@ function broadcastAISnapshots(room, result) {
       p.send(JSON.stringify({ type: 'update', ...result, snapshot: ps }));
     }
   }
-  // 检查是否又轮到AI（如stillwater跳过对手后）
+  // 检查是否又轮到AI
   if (room.aiMode && !room.gameOver && !room.pendingSkill && !room.ambushState) {
     const aiIdx = room.players.findIndex(p => p && p._isAI);
     if (aiIdx >= 0 && room.currentPlayer === room.roles[aiIdx]) {
@@ -311,15 +316,20 @@ function broadcastAISnapshots(room, result) {
   }
 }
 
-function createRoom(id, mode, names) {
+function createRoom(id, mode, names, gameMode) {
   const count = mode === 3 ? 3 : 2;
   const players = new Array(count).fill(null);
   const roles = count === 3 ? [P1, P2, P3] : [P1, P2];
+  const isBlood = gameMode === 'blood';
   return {
     id, mode, count, players, roles, names,
+    gameMode: gameMode || 'classic',
+    targetScore: isBlood ? 5 : 0,
+    bloodScores: {},
     board: Array.from({length:N},()=>Array(N).fill(EMPTY)),
     stoneAge: Array.from({length:N},()=>Array(N).fill(0)),
     riftAge: Array.from({length:N},()=>Array(N).fill(0)),
+    ruinAge: Array.from({length:N},()=>Array(N).fill(0)),
     // swap tracking: board stores original owner temporarily
     swapMap: {}, // "r,c" -> {owner, turnsLeft}
     // ambush hidden stones: 真棋子对其他玩家隐藏
@@ -405,6 +415,7 @@ function snap(room) {
     board,
     stoneAge: room.stoneAge,
     riftAge: room.riftAge,
+    ruinAge: room.ruinAge,
     currentPlayer: room.currentPlayer,
     totalMoves: room.totalMoves,
     gameOver: room.gameOver,
@@ -417,10 +428,19 @@ function snap(room) {
       type: room.pendingSkill.type,
       player: room.pendingSkill.player,
       r: room.pendingSkill.r,
-      c: room.pendingSkill.c
+      c: room.pendingSkill.c,
+      myR: room.pendingSkill.myR,
+      myC: room.pendingSkill.myC,
+      opR: room.pendingSkill.opR,
+      opC: room.pendingSkill.opC
     } : null,
     equipped: room.equipped,
     skillState: room.skillState,
+    sandstormLastUsed: room.sandstormLastUsed,
+    gameMode: room.gameMode,
+    bloodWinCondition: { fiveCount: 5, bloodScore: 20 }, // 血战胜利条件
+    targetScore: room.targetScore,
+    bloodScores: room.bloodScores,
     ambushPhase: ambush ? ambush.phase : null,
     ambushPlayer: ambush ? ambush.player : null,
     ambushFakePos: ambush ? ambush.fakePos : null, // 当前进行中的假棋子
@@ -610,7 +630,7 @@ function applyDecay(room) {
   for(let r=0;r<N;r++) for(let c=0;c<N;c++){
     if(room.roles.includes(room.board[r][c])){
       room.stoneAge[r][c]++;
-      if(room.stoneAge[r][c]>=DECAY_TURNS){room.board[r][c]=RUIN;room.stoneAge[r][c]=0;d++;}
+      if(room.stoneAge[r][c]>=DECAY_TURNS){room.board[r][c]=RUIN;room.stoneAge[r][c]=0;room.ruinAge[r][c]=0;d++;}
     }
   }
   return d;
@@ -629,6 +649,12 @@ function spawnRifts(room) {
 function ageRifts(room) {
   for(let r=0;r<N;r++) for(let c=0;c<N;c++){
     if(room.board[r][c]===RIFT){room.riftAge[r][c]++;if(room.riftAge[r][c]>=RIFT_DURATION){room.board[r][c]=EMPTY;room.riftAge[r][c]=0;}}
+  }
+}
+
+function ageRuins(room) {
+  for(let r=0;r<N;r++) for(let c=0;c<N;c++){
+    if(room.board[r][c]===RUIN){room.ruinAge[r][c]++;if(room.ruinAge[r][c]>=10){room.board[r][c]=EMPTY;room.ruinAge[r][c]=0;}}
   }
 }
 
@@ -653,6 +679,7 @@ function postMove(room) {
   if(room.globalSettings.decay) applyDecay(room);
   if(room.globalSettings.rift && room.totalMoves>0 && room.totalMoves%RIFT_INTERVAL===0) spawnRifts(room);
   ageRifts(room);
+  ageRuins(room);
   processSwaps(room);
   // Decrement move skill cooldowns
   for (const role of room.roles) {
@@ -660,6 +687,7 @@ function postMove(room) {
     if (ss) {
       for (const sid of Object.keys(ss)) {
         if (sid === 'move' && ss[sid] > 0) ss[sid]--;
+        if (sid === 'swapPos' && ss[sid] > 0) ss[sid]--;
       }
     }
   }
@@ -703,9 +731,22 @@ function handlePlace(room, r, c, player) {
     // Check win — ambush real stone CAN win (it's a normal stone)
     // 假棋子不参与胜利检测
     room.novaLine = null;
-    if(room.globalSettings.nova){const four=findLines(room.board,r,c,player,4,fakePos);if(four.length>0)room.novaLine={cells:four[0],player};}
+    if(room.globalSettings.nova && room.gameMode!=='blood'){const four=findLines(room.board,r,c,player,4,fakePos);if(four.length>0)room.novaLine={cells:four[0],player};}
     const five=findLines(room.board,r,c,player,5,fakePos);
-    if(five.length>0){room.gameOver=true;room.winCells=five[0];room.scores[player]=(room.scores[player]||0)+1;room.novaLine=null;}
+    if(five.length>0){
+      room.winCells=five[0];room.novaLine=null;
+      if(room.gameMode==='blood'){
+        const bloodResult = bloodClear(room, five[0], player);
+        room.scores[player]=(room.scores[player]||0)+1;
+        const reachedTarget = checkBloodWin(room, player);
+        if(reachedTarget) room.gameOver=true;
+        else room.winCells=[];
+        if(!room.gameOver){postMove(room);advanceTurn(room);}
+        return {ok:true,devoured,action:'place',ambushComplete:true,fakePos,bloodClear:bloodResult,bloodMode:true,snapshot:snap(room)};
+      }else{
+        room.gameOver=true;room.scores[player]=(room.scores[player]||0)+1;
+      }
+    }
 
     if(!room.gameOver){postMove(room);if(!room.novaLine)advanceTurn(room);}
     return {ok:true,devoured,action:'place',ambushComplete:true,fakePos,snapshot:snap(room)};
@@ -742,19 +783,82 @@ function handlePlace(room, r, c, player) {
   // 获取假棋子位置（如果有），用于排除胜利检测
   const fakePos = room.ambushState ? room.ambushState.fakePos : null;
   
-  if(room.globalSettings.nova){const four=findLines(room.board,r,c,player,4,fakePos);if(four.length>0)room.novaLine={cells:four[0],player};}
+  if(room.globalSettings.nova && room.gameMode!=='blood'){const four=findLines(room.board,r,c,player,4,fakePos);if(four.length>0)room.novaLine={cells:four[0],player};}
 
   // Check win: skip if this stone is swap-converted (shouldn't happen on normal place but safety)
   const five=findLines(room.board,r,c,player,5,fakePos);
-  if(five.length>0){room.gameOver=true;room.winCells=five[0];room.scores[player]=(room.scores[player]||0)+1;room.novaLine=null;}
+  if(five.length>0){
+    room.winCells=five[0];room.novaLine=null;
+    if(room.gameMode==='blood'){
+      // Blood mode: clear area, award score, check if target reached
+      const bloodResult = bloodClear(room, five[0], player);
+      room.scores[player]=(room.scores[player]||0)+1;
+      const reachedTarget = checkBloodWin(room, player);
+      if(reachedTarget) room.gameOver=true;
+      else room.winCells=[]; // clear win cells since game continues
+      if(!room.gameOver){postMove(room);advanceTurn(room);}
+      return {ok:true,devoured,action:'place',bloodClear:bloodResult,bloodMode:true,snapshot:snap(room)};
+    }else{
+      room.gameOver=true;room.scores[player]=(room.scores[player]||0)+1;
+    }
+  }
 
   if(!room.gameOver){postMove(room);if(!room.novaLine)advanceTurn(room);}
   return {ok:true,devoured,action:'place',snapshot:snap(room)};
 }
 
+// Blood mode: clear cells around five-in-a-row and award score
+function bloodClear(room, winCells, player) {
+  const cleared = [];
+  const clearedSet = new Set();
+  // The five-in-a-row cells themselves stay, but surrounding cells are cleared
+  for (const [wr, wc] of winCells) {
+    for (let dr = -1; dr <= 1; dr++) {
+      for (let dc = -1; dc <= 1; dc++) {
+        const nr = wr + dr, nc = wc + dc;
+        if (nr < 0 || nr >= N || nc < 0 || nc >= N) continue;
+        // Skip the five-in-a-row cells themselves
+        if (winCells.some(([r, c]) => r === nr && c === nc)) continue;
+        const key = nr * N + nc;
+        if (clearedSet.has(key)) continue;
+        if (room.board[nr][nc] === EMPTY) continue;
+        if (room.board[nr][nc] === RIFT) continue;
+        if (isImpervious(room, nr, nc)) continue;
+        clearedSet.add(key);
+        cleared.push([nr, nc, room.board[nr][nc]]);
+        room.board[nr][nc] = EMPTY;
+        room.stoneAge[nr][nc] = 0;
+        delete room.swapMap[`${nr},${nc}`];
+        // Clear ambush hidden records
+        delete room.ambushHidden[`${nr},${nc}`];
+      }
+    }
+  }
+  // Also clear the five-in-a-row cells themselves
+  for (const [wr, wc] of winCells) {
+    room.board[wr][wc] = EMPTY;
+    room.stoneAge[wr][wc] = 0;
+    delete room.swapMap[`${wr},${wc}`];
+    delete room.ambushHidden[`${wr},${wc}`];
+  }
+  const baseScore = 1;
+  const bonusScore = cleared.length * 0.5;
+  const totalScore = baseScore + bonusScore;
+  room.bloodScores[player] = (room.bloodScores[player] || 0) + totalScore;
+  return { cleared, score: totalScore, totalBloodScore: room.bloodScores[player] };
+}
+
+// 检查血战模式胜利条件：五连次数>=5 或 血战分数>=20
+function checkBloodWin(room, player) {
+  const fiveCount = room.scores[player] || 0;
+  const bloodScore = room.bloodScores[player] || 0;
+  return fiveCount >= 5 || bloodScore >= 20;
+}
+
 function handleSupernova(room, player) {
   if(!room.novaLine||room.gameOver) return {error:'无法引爆'};
   if(room.novaLine.player!==player) return {error:'不是你的连珠'};
+  if(room.gameMode==='blood') return {error:'血战模式中无法引爆超新星'};
   const cells=room.novaLine.cells;const destroyed=[];
   for(const [lr,lc] of cells){
     for(let dr=-2;dr<=2;dr++) for(let dc=-2;dc<=2;dc++){
@@ -781,7 +885,7 @@ function resolveSandstorm(room) {
   const ps=room.pendingSkill;if(!ps)return;
   const prevValue = room.board[ps.r][ps.c];
   // 飞沙走石后生成废墟，而不是空位
-  room.board[ps.r][ps.c]=RUIN;room.stoneAge[ps.r][ps.c]=0;
+  room.board[ps.r][ps.c]=RUIN;room.stoneAge[ps.r][ps.c]=0;room.ruinAge[ps.r][ps.c]=0;
   delete room.swapMap[`${ps.r},${ps.c}`];
   // 清除暗度陈仓隐藏棋子记录（如果该位置有）
   delete room.ambushHidden[`${ps.r},${ps.c}`];
@@ -789,6 +893,20 @@ function resolveSandstorm(room) {
   console.log(`[飞沙走石] (${ps.r},${ps.c}) 从 ${prevValue} 变为废墟(RUIN=4)`);
   room.totalMoves++;postMove(room);advanceTurn(room);
   broadcastAll(room,{type:'skillApplied',skill:'sandstorm',player:ps.player,r:ps.r,c:ps.c,snapshot:snap(room)});
+}
+
+function resolveSwapPos(room) {
+  const ps=room.pendingSkill;if(!ps)return;
+  room.pendingSkill=null;room.pendingTimer=null;
+  room.totalMoves++;postMove(room);advanceTurn(room);
+  broadcastAll(room,{type:'skillApplied',skill:'swapPos',player:ps.player,myR:ps.myR,myC:ps.myC,opR:ps.opR,opC:ps.opC,snapshot:snap(room)});
+}
+
+function resolveSwap(room) {
+  const ps=room.pendingSkill;if(!ps)return;
+  room.pendingSkill=null;room.pendingTimer=null;
+  room.totalMoves++;postMove(room);advanceTurn(room);
+  broadcastAll(room,{type:'skillApplied',skill:'swap',player:ps.player,r:ps.r,c:ps.c,from:ps.from,to:ps.player,snapshot:snap(room)});
 }
 
 function handleSkill(room, msg, player) {
@@ -818,16 +936,56 @@ function handleSkill(room, msg, player) {
     return {ok:true,action:'skill',skill:'sandstorm',pending:true,player};
   }
 
-  if(sid==='stillwater'){
-    const target=msg.target;
-    if(!room.roles.includes(target)||target===player) return {error:'无效目标'};
-    room.skipNext.add(target);
-    room.totalMoves++;postMove(room);advanceTurn(room);
-    return {ok:true,action:'skill',skill:'stillwater',player,target,snapshot:snap(room)};
+  if(sid==='swapPos'){
+    const {myR,myC,opR,opC}=msg;
+    if(myR<0||myR>=N||myC<0||myC>=N||opR<0||opR>=N||opC<0||opC>=N) return {error:'无效位置'};
+    if(room.board[myR][myC]!==player) return {error:'起始位置必须是己方棋子'};
+    if(!room.roles.includes(room.board[opR][opC])||room.board[opR][opC]===player) return {error:'目标位置必须是对手棋子'};
+    if(isImpervious(room,opR,opC)) return {error:'该棋子受无懈可击保护'};
+    // Check cooldown
+    const ss = room.skillState[player] || {};
+    if(ss.swapPos > 0) return {error:`移形换影冷却中，还需${ss.swapPos}回合`};
+    // Swap positions
+    const opStone = room.board[opR][opC];
+    room.board[myR][myC] = opStone;
+    room.board[opR][opC] = player;
+    // Swap stoneAge
+    const tmpAge = room.stoneAge[myR][myC];
+    room.stoneAge[myR][myC] = room.stoneAge[opR][opC];
+    room.stoneAge[opR][opC] = tmpAge;
+    // Swap swapMap if exists
+    const myKey = `${myR},${myC}`;
+    const opKey = `${opR},${opC}`;
+    const mySwap = room.swapMap[myKey];
+    const opSwap = room.swapMap[opKey];
+    if(mySwap) delete room.swapMap[myKey]; else delete room.swapMap[myKey];
+    if(opSwap) delete room.swapMap[opKey]; else delete room.swapMap[opKey];
+    // Swap ambush hidden if exists
+    const myAmbush = room.ambushHidden[myKey];
+    const opAmbush = room.ambushHidden[opKey];
+    delete room.ambushHidden[myKey];
+    delete room.ambushHidden[opKey];
+    if(myAmbush) room.ambushHidden[opKey] = myAmbush;
+    if(opAmbush) room.ambushHidden[myKey] = opAmbush;
+    ss.swapPos = 4; // cooldown
+    room.skillState[player] = ss;
+    room.pendingSkill = {type:'swapPos',player,myR,myC,opR,opC};
+    broadcastAll(room,{type:'skillPending',skill:'swapPos',player,myR,myC,opR,opC});
+    room.pendingTimer=setTimeout(()=>{if(room.pendingSkill&&room.pendingSkill.type==='swapPos')resolveSwapPos(room);},1500);
+    return {ok:true,action:'skill',skill:'swapPos',pending:true,player,myR,myC,opR,opC};
   }
 
   if(sid==='mountain'){
     if(room.totalMoves<=50) return {error:'回合数不足50'};
+    if(room.gameMode==='blood'){
+      // Blood mode: 力拔山兮 gives 3 points instead of instant win
+      room.bloodScores[player] = (room.bloodScores[player]||0) + 3;
+      room.scores[player]=(room.scores[player]||0)+1;
+      const reachedTarget = checkBloodWin(room, player);
+      if(reachedTarget) room.gameOver=true;
+      room.totalMoves++;postMove(room);if(!room.gameOver)advanceTurn(room);
+      return {ok:true,action:'skill',skill:'mountain',player,bloodMode:true,bloodScore:room.bloodScores[player],gameOver:room.gameOver,snapshot:snap(room)};
+    }
     room.gameOver=true;room.winCells=[];room.scores[player]=(room.scores[player]||0)+1;
     return {ok:true,action:'skill',skill:'mountain',winner:player,snapshot:snap(room)};
   }
@@ -842,10 +1000,10 @@ function handleSkill(room, msg, player) {
     room.swapMap[`${r},${c}`] = {owner: target, turnsLeft: 3};
     room.board[r][c] = player;
     room.stoneAge[r][c] = 0;
-    room.totalMoves++;
-    // Do NOT check win — swap cannot win this turn
-    postMove(room);advanceTurn(room);
-    return {ok:true,action:'skill',skill:'swap',player,r,c,from:target,to:player,snapshot:snap(room)};
+    room.pendingSkill = {type:'swap',player,r,c,from:target};
+    broadcastAll(room,{type:'skillPending',skill:'swap',player,r,c});
+    room.pendingTimer=setTimeout(()=>{if(room.pendingSkill&&room.pendingSkill.type==='swap')resolveSwap(room);},1500);
+    return {ok:true,action:'skill',skill:'swap',pending:true,player,r,c,from:target,to:player};
   }
 
   if(sid==='move'){
@@ -911,19 +1069,37 @@ function handleAmbushFake(room, r, c, player) {
 }
 
 function handleIntercept(room, player) {
-  if(!room.pendingSkill||room.pendingSkill.type!=='sandstorm') return {error:'无待响应技能'};
+  const interceptableTypes = ['sandstorm','swap','swapPos'];
+  if(!room.pendingSkill||!interceptableTypes.includes(room.pendingSkill.type)) return {error:'无待响应技能'};
   if(player===room.pendingSkill.player) return {error:'不能响应自己的技能'};
   if(!(room.equipped[player]||[]).includes('intercept')) return {error:'未装备擒拿'};
   if(room.pendingTimer){clearTimeout(room.pendingTimer);room.pendingTimer=null;}
   const originalPlayer=room.pendingSkill.player;
+  const interceptedSkill = room.pendingSkill.type;
+  // If swap or swapPos was intercepted, revert the swap
+  if(interceptedSkill==='swap'){
+    const ps=room.pendingSkill;
+    room.board[ps.r][ps.c]=ps.from; // revert to original owner
+    room.stoneAge[ps.r][ps.c]=0;
+    delete room.swapMap[`${ps.r},${ps.c}`];
+  }
+  if(interceptedSkill==='swapPos'){
+    const ps=room.pendingSkill;
+    // Revert swap positions
+    const temp1 = room.board[ps.myR][ps.myC];
+    const temp2 = room.board[ps.opR][ps.opC];
+    room.board[ps.myR][ps.myC] = temp2;
+    room.board[ps.opR][ps.opC] = temp1;
+  }
   room.pendingSkill=null;room.totalMoves++;postMove(room);advanceTurn(room);
-  return {ok:true,action:'intercept',interceptor:player,originalPlayer,snapshot:snap(room)};
+  return {ok:true,action:'intercept',interceptor:player,originalPlayer,interceptedSkill,snapshot:snap(room)};
 }
 
 function resetRoom(room) {
   room.board=Array.from({length:N},()=>Array(N).fill(EMPTY));
   room.stoneAge=Array.from({length:N},()=>Array(N).fill(0));
   room.riftAge=Array.from({length:N},()=>Array(N).fill(0));
+  room.ruinAge=Array.from({length:N},()=>Array(N).fill(0));
   room.swapMap={};
   room.ambushHidden={}; // 清空暗度陈仓隐藏棋子
   room.currentPlayer=P1;room.totalMoves=0;room.history=[];
@@ -933,6 +1109,7 @@ function resetRoom(room) {
   room.ambushState=null;
   room.ambushUsed=new Set(); // 重置暗度陈仓使用记录
   room.sandstormLastUsed={}; // 重置飞沙走石使用记录
+  room.bloodScores={}; // 重置血战得分
   room.undoRequest=null; // 重置悔棋请求
   if(room.pendingTimer){clearTimeout(room.pendingTimer);room.pendingTimer=null;}
   initSkillState(room);
@@ -952,7 +1129,8 @@ wss.on('connection', ws => {
         const id=getRoomId();
         const mode=msg.mode||2;
         const names=msg.names||{1:'星辰',2:'虚空',3:'极光'};
-        const room=createRoom(id,mode,names);
+        const gameMode=msg.gameMode||'classic';
+        const room=createRoom(id,mode,names,gameMode);
         rooms.set(id,room);
         room.players[0]=ws;
         playerRoom.set(ws,id);
@@ -972,9 +1150,9 @@ wss.on('connection', ws => {
           console.log(`[创建AI] 房间${id} AI难度=${msg.aiDifficulty} 技能=${room.equipped[aiRole].join(',')}`);
         }
 
-        console.log(`[创建] 房间${id} ${mode}人${msg.aiMode?' (AI '+msg.aiDifficulty+')':''}`);
-        ws.send(JSON.stringify({type:'joined',roomId:id,role:room.roles[0],playerIndex:0,mode,names:room.names,aiMode:room.aiMode||false,aiDifficulty:room.aiDifficulty||null}));
-        ws.send(JSON.stringify({type:'roomUpdate',players:room.players.map(p=>p!==null),settings:room.globalSettings,names:room.names,mode,allSkills:ALL_SKILLS,equipped:room.equipped,aiMode:room.aiMode||false,aiDifficulty:room.aiDifficulty||null}));
+        console.log(`[创建] 房间${id} ${mode}人${msg.aiMode?' (AI '+msg.aiDifficulty+')':''} ${gameMode}`);
+        ws.send(JSON.stringify({type:'joined',roomId:id,role:room.roles[0],playerIndex:0,mode,names:room.names,aiMode:room.aiMode||false,aiDifficulty:room.aiDifficulty||null,gameMode}));
+        ws.send(JSON.stringify({type:'roomUpdate',players:room.players.map(p=>p!==null),settings:room.globalSettings,names:room.names,mode,allSkills:ALL_SKILLS,equipped:room.equipped,aiMode:room.aiMode||false,aiDifficulty:room.aiDifficulty||null,gameMode}));
         break;
       }
       case 'join':{
@@ -991,7 +1169,7 @@ wss.on('connection', ws => {
         if(msg.name&&msg.name.trim()) room.names[assignedRole]=msg.name.trim().slice(0,8);
         console.log(`[加入] 房间${id} → 位${emptyIdx}`);
         ws.send(JSON.stringify({type:'joined',roomId:id,role:assignedRole,playerIndex:emptyIdx,mode:room.mode,names:room.names}));
-        broadcastAll(room,{type:'roomUpdate',players:room.players.map(Boolean),settings:room.globalSettings,names:room.names,mode:room.mode,allSkills:ALL_SKILLS});
+        broadcastAll(room,{type:'roomUpdate',players:room.players.map(Boolean),settings:room.globalSettings,names:room.names,mode:room.mode,allSkills:ALL_SKILLS,gameMode:room.gameMode});
         break;
       }
       case 'setName':{
@@ -999,7 +1177,7 @@ wss.on('connection', ws => {
         const room=rooms.get(rid);if(!room)return;
         const role=playerRole(ws);if(!role)return;
         if(msg.name&&msg.name.trim()) room.names[role]=msg.name.trim().slice(0,8);
-        broadcastAll(room,{type:'roomUpdate',players:room.players.map(Boolean),settings:room.globalSettings,names:room.names,mode:room.mode,allSkills:ALL_SKILLS});
+        broadcastAll(room,{type:'roomUpdate',players:room.players.map(Boolean),settings:room.globalSettings,names:room.names,mode:room.mode,allSkills:ALL_SKILLS,gameMode:room.gameMode});
         break;
       }
       case 'toggleSetting':{
@@ -1009,7 +1187,7 @@ wss.on('connection', ws => {
         const key=msg.key;
         if(room.globalSettings.hasOwnProperty(key)){
           room.globalSettings[key]=!room.globalSettings[key];
-          broadcastAll(room,{type:'roomUpdate',players:room.players.map(Boolean),settings:room.globalSettings,names:room.names,mode:room.mode,allSkills:ALL_SKILLS});
+          broadcastAll(room,{type:'roomUpdate',players:room.players.map(Boolean),settings:room.globalSettings,names:room.names,mode:room.mode,allSkills:ALL_SKILLS,gameMode:room.gameMode});
         }
         break;
       }
@@ -1020,7 +1198,7 @@ wss.on('connection', ws => {
         const skills=msg.skills||[];
         if(skills.length>2) return ws.send(JSON.stringify({type:'error',message:'最多选2个技能'}));
         room.equipped[role]=skills.slice(0,2);
-        broadcastAll(room,{type:'roomUpdate',players:room.players.map(Boolean),settings:room.globalSettings,names:room.names,mode:room.mode,allSkills:ALL_SKILLS,equipped:room.equipped});
+        broadcastAll(room,{type:'roomUpdate',players:room.players.map(Boolean),settings:room.globalSettings,names:room.names,mode:room.mode,allSkills:ALL_SKILLS,equipped:room.equipped,gameMode:room.gameMode});
         break;
       }
       case 'startGame':{
@@ -1037,10 +1215,10 @@ wss.on('connection', ws => {
           }
         }
         room.gameStarted=true;
-        for(const r of room.roles) room.scores[r]=0;
+        for(const r of room.roles){ room.scores[r]=0; room.bloodScores[r]=0; }
         initSkillState(room);
         console.log(`[开始] 房间${rid}`);
-        broadcastAll(room,{type:'gameStart',snapshot:snap(room),names:room.names,mode:room.mode,aiMode:room.aiMode||false});
+        broadcastAll(room,{type:'gameStart',snapshot:snap(room),names:room.names,mode:room.mode,aiMode:room.aiMode||false,gameMode:room.gameMode});
         break;
       }
       case 'place':{
@@ -1127,6 +1305,12 @@ wss.on('connection', ws => {
         const result=handleIntercept(room,role);
         if(result.error){ws.send(JSON.stringify({type:'error',message:result.error}));return;}
         broadcastAll(room,{type:'intercept',...result});
+        if(room.aiMode && !room.gameOver && !room.pendingSkill){
+          const aiIdx=room.players.findIndex(p=>p&&p._isAI);
+          if(aiIdx>=0 && room.currentPlayer===room.roles[aiIdx]){
+            scheduleAIMove(rid, room.aiDifficulty);
+          }
+        }
         break;
       }
       case 'supernova':{
@@ -1154,19 +1338,26 @@ wss.on('connection', ws => {
         room.ready[pi]=true;
         // AI房间：人类请求直接重启
         if(room.aiMode){
-          const scores=room.scores;const settings=room.globalSettings;const equipped=room.equipped;
-          resetRoom(room);room.scores=scores;room.globalSettings=settings;room.equipped=equipped;room.gameStarted=true;
+          const settings=room.globalSettings;const equipped=room.equipped;
+          const gameMode=room.gameMode; // 保持游戏模式
+          resetRoom(room);room.globalSettings=settings;room.equipped=equipped;room.gameStarted=true;
           room.aiMode=true;room.aiDifficulty=room.aiDifficulty||'medium';
+          room.gameMode=gameMode; // 恢复游戏模式
+          // 血战模式重置分数
+          for(const r of room.roles){room.scores[r]=0;room.bloodScores[r]=0;}
           initSkillState(room);
-          broadcastAll(room,{type:'restarted',snapshot:snap(room),names:room.names,mode:room.mode});
+          broadcastAll(room,{type:'restarted',snapshot:snap(room),names:room.names,mode:room.mode,gameMode:room.gameMode});
           break;
         }
         for(const opp of room.players){if(opp&&opp!==ws&&opp.readyState===1)opp.send(JSON.stringify({type:'restartRequested'}));}
         if(room.ready.every(Boolean)){
-          const scores=room.scores;const settings=room.globalSettings;const equipped=room.equipped;
-          resetRoom(room);room.scores=scores;room.globalSettings=settings;room.equipped=equipped;room.gameStarted=true;
+          const settings=room.globalSettings;const equipped=room.equipped;
+          const gameMode=room.gameMode;
+          resetRoom(room);room.globalSettings=settings;room.equipped=equipped;room.gameStarted=true;
+          room.gameMode=gameMode;
+          for(const r of room.roles){room.scores[r]=0;room.bloodScores[r]=0;}
           initSkillState(room);
-          broadcastAll(room,{type:'restarted',snapshot:snap(room),names:room.names,mode:room.mode});
+          broadcastAll(room,{type:'restarted',snapshot:snap(room),names:room.names,mode:room.mode,gameMode:room.gameMode});
         }
         break;
       }
