@@ -46,6 +46,7 @@ module.exports = {
     heartbeatMs:    30 * 1000,   // 心跳检测周期
     roomIdleSweepMs:  5 * 60 * 1000, // 空闲房间清扫周期
     roomIdleMaxMs:   60 * 60 * 1000, // 空闲房间存活上限
+    reconnectGraceMs: 60 * 1000, // 断线后允许重连的宽限期
   },
 
   // 输入限制

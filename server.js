@@ -1,6 +1,7 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const WebSocket = require('ws');
 const { getAIMove, aiAmbush } = require('./ai-engine');
 const { validateMessage, createRateLimiter } = require('./validate');
@@ -410,6 +411,9 @@ function createRoom(id, mode, names, gameMode) {
     sandstormLastUsed: {}, // role -> lastUsedMove (飞沙走石上次使用的回合数)
     // Undo request state
     undoRequest: null, // {from: role} - 悔棋请求
+    // 断线重连支持
+    playerTokens: new Array(count).fill(null),       // 每个座位的 sessionToken
+    pendingDisconnect: new Array(count).fill(null),  // 每个座位的 {timer, role}（断线宽限期）
     lastActivity: Date.now()
   };
 }
@@ -428,7 +432,6 @@ function initSkillState(room) {
 // 字符集 32 个，5 位 ≈ 33M 组合；冲突极小，但仍保留最大重试以防极端情况
 const ROOM_ID_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 function getRoomId() {
-  const crypto = require('crypto');
   for (let attempt = 0; attempt < 100; attempt++) {
     const bytes = crypto.randomBytes(5);
     let id = '';
@@ -437,6 +440,11 @@ function getRoomId() {
   }
   // 兜底：在极端冲突场景下退化为更长的 ID，确保函数始终能返回
   return 'R' + Date.now().toString(36).toUpperCase();
+}
+
+// 生成 sessionToken（base64url 32 字节，足够防猜）
+function genSessionToken() {
+  return crypto.randomBytes(24).toString('base64url');
 }
 
 function playerRole(ws) {
@@ -1228,7 +1236,9 @@ wss.on('connection', ws => {
         }
 
         console.log(`[创建] 房间${id} ${mode}人${msg.aiMode?' (AI '+msg.aiDifficulty+')':''} ${gameMode}`);
-        ws.send(JSON.stringify({type:'joined',roomId:id,role:room.roles[0],playerIndex:0,mode,names:room.names,aiMode:room.aiMode||false,aiDifficulty:room.aiDifficulty||null,gameMode}));
+        const creatorToken = genSessionToken();
+        room.playerTokens[0] = creatorToken;
+        ws.send(JSON.stringify({type:'joined',roomId:id,role:room.roles[0],playerIndex:0,mode,names:room.names,aiMode:room.aiMode||false,aiDifficulty:room.aiDifficulty||null,gameMode,sessionToken:creatorToken}));
         ws.send(JSON.stringify({type:'roomUpdate',players:room.players.map(p=>p!==null),settings:room.globalSettings,names:room.names,mode,allSkills:ALL_SKILLS,equipped:room.equipped,aiMode:room.aiMode||false,aiDifficulty:room.aiDifficulty||null,gameMode}));
         break;
       }
@@ -1245,8 +1255,54 @@ wss.on('connection', ws => {
         playerRoom.set(ws,id);
         if(msg.name&&msg.name.trim()) room.names[assignedRole]=msg.name.trim().slice(0,NAME_MAX_LEN);
         console.log(`[加入] 房间${id} → 位${emptyIdx}`);
-        ws.send(JSON.stringify({type:'joined',roomId:id,role:assignedRole,playerIndex:emptyIdx,mode:room.mode,names:room.names}));
+        const joinerToken = genSessionToken();
+        room.playerTokens[emptyIdx] = joinerToken;
+        ws.send(JSON.stringify({type:'joined',roomId:id,role:assignedRole,playerIndex:emptyIdx,mode:room.mode,names:room.names,sessionToken:joinerToken}));
         broadcastAll(room,{type:'roomUpdate',players:room.players.map(Boolean),settings:room.globalSettings,names:room.names,mode:room.mode,allSkills:ALL_SKILLS,gameMode:room.gameMode});
+        break;
+      }
+      case 'reconnect':{
+        const id=msg.roomId?.toUpperCase();
+        const room=rooms.get(id);
+        if(!room){ws.send(JSON.stringify({type:'error',message:'房间不存在或已过期'}));return;}
+        const idx = room.playerTokens.findIndex(t => t && t === msg.sessionToken);
+        if(idx < 0){ws.send(JSON.stringify({type:'error',message:'会话凭证无效'}));return;}
+        // 清掉宽限期 timer
+        const pd = room.pendingDisconnect[idx];
+        if(pd && pd.timer){clearTimeout(pd.timer);}
+        room.pendingDisconnect[idx] = null;
+        // 关闭旧的占位连接（如有）
+        const oldWs = room.players[idx];
+        if(oldWs && oldWs !== ws && !oldWs._isAI && oldWs.readyState === 1){
+          try{ oldWs.close(4001, 'reconnected elsewhere'); }catch{}
+        }
+        room.players[idx] = ws;
+        playerRoom.set(ws, id);
+        const role = room.roles[idx];
+        room.lastActivity = Date.now();
+        console.log(`[重连] 房间${id} → 位${idx} (role=${role})`);
+        // 回放：joined + 个性化快照
+        ws.send(JSON.stringify({
+          type:'joined', roomId:id, role, playerIndex:idx, mode:room.mode,
+          names:room.names, aiMode:room.aiMode||false,
+          aiDifficulty:room.aiDifficulty||null, gameMode:room.gameMode,
+          sessionToken: msg.sessionToken, reconnected: true,
+        }));
+        ws.send(JSON.stringify({
+          type:'roomUpdate',
+          players:room.players.map(p=>p!==null),
+          settings:room.globalSettings, names:room.names, mode:room.mode,
+          allSkills:ALL_SKILLS, equipped:room.equipped,
+          aiMode:room.aiMode||false, aiDifficulty:room.aiDifficulty||null,
+          gameMode:room.gameMode,
+        }));
+        if(room.gameStarted){
+          ws.send(JSON.stringify({
+            type:'update', action:'reconnect', snapshot: personalSnap(room, role),
+          }));
+        }
+        // 通知其他玩家
+        broadcastExcept(room,{type:'playerReconnected',playerIndex:idx,role}, ws);
         break;
       }
       case 'setName':{
@@ -1488,17 +1544,44 @@ wss.on('connection', ws => {
     const room=rooms.get(rid);if(!room)return;
     const pi=room.players.indexOf(ws);if(pi<0)return;
     const role=room.roles[pi];
-    room.players[pi]=null;playerRoom.delete(ws);
-    if(room.pendingTimer){clearTimeout(room.pendingTimer);room.pendingTimer=null;}
-    room.pendingSkill=null;
-    // AI房间：人类离开时清理整个房间
+    playerRoom.delete(ws);
+    // AI房间：人类离开时立即清理整个房间（保持原行为）
     if(room.aiMode){
+      room.players[pi]=null;
+      if(room.pendingTimer){clearTimeout(room.pendingTimer);room.pendingTimer=null;}
+      room.pendingSkill=null;
       const aiIdx=room.players.findIndex(p=>p&&p._isAI);
       if(aiIdx>=0) room.players[aiIdx]=null;
       rooms.delete(rid);
       console.log(`[AI房间关闭] 房间${rid}`);
       return;
     }
+    // 普通房间：先进入断线宽限期，仍占着座位，允许 reconnect
+    if(room.gameStarted && room.playerTokens[pi]){
+      // 通知其他玩家"暂时断开"
+      broadcastExcept(room,{type:'playerDisconnected',playerIndex:pi,role,graceMs:CONFIG.net.reconnectGraceMs}, ws);
+      const graceTimer = setTimeout(()=>{
+        const r = rooms.get(rid);
+        if(!r) return;
+        if(r.players[pi] !== ws) return; // 已被新连接顶替
+        r.players[pi] = null;
+        r.playerTokens[pi] = null;
+        r.pendingDisconnect[pi] = null;
+        if(r.pendingTimer){clearTimeout(r.pendingTimer);r.pendingTimer=null;}
+        r.pendingSkill = null;
+        console.log(`[超时清座] 房间${rid} 位${pi}`);
+        broadcastAll(r,{type:'playerLeft',playerIndex:pi,role});
+        if(r.players.every(p=>p===null))setTimeout(()=>{if(r.players.every(p=>p===null))rooms.delete(rid);},30 * 1000);
+      }, CONFIG.net.reconnectGraceMs);
+      room.pendingDisconnect[pi] = { timer: graceTimer, role };
+      console.log(`[断线宽限] 房间${rid} 位${pi} (role=${role}) 等待 ${CONFIG.net.reconnectGraceMs}ms`);
+      return;
+    }
+    // 未开局或未签发 token：保持旧逻辑——立即清座位
+    room.players[pi]=null;
+    room.playerTokens[pi]=null;
+    if(room.pendingTimer){clearTimeout(room.pendingTimer);room.pendingTimer=null;}
+    room.pendingSkill=null;
     broadcastAll(room,{type:'playerLeft',playerIndex:pi,role});
     if(room.players.every(p=>p===null))setTimeout(()=>{if(room.players.every(p=>p===null))rooms.delete(rid);},30 * 1000);
   });

@@ -87,6 +87,20 @@
 {"type":"restart"}
 ```
 
+#### `reconnect` 断线重连
+
+```json
+{"type":"reconnect","roomId":"ABCDE","sessionToken":"<服务端在 joined 中下发的 token>"}
+```
+
+- 客户端应在收到 `joined` 时持久化 `sessionToken`（如 `sessionStorage`）。
+- 连接异常断开后，**60 秒宽限期**内（默认值，可通过 `config.net.reconnectGraceMs` 调整）携带原 token 即可恢复座位。
+- 重连成功时服务端会回发：
+  - `joined`（`reconnected: true`，原 `role` / `playerIndex` / `sessionToken`）
+  - `roomUpdate`（最新房间元数据）
+  - `update` (`action: 'reconnect'`)，附带个性化 `snapshot`
+- 超过宽限期或 token 不匹配会回 `{type:'error', message:'会话凭证无效'}` 或 `'房间不存在或已过期'`。
+
 ### 对局操作
 
 #### `place` 落子
@@ -151,9 +165,11 @@ AI 房间会自动接受悔棋请求。
 
 | `type` | 触发时机 | 关键字段 |
 |---|---|---|
-| `joined`        | 加入房间后 | `roomId`, `role`, `playerIndex`, `mode`, `names`, `aiMode`, `gameMode` |
+| `joined`        | 加入房间后 / 重连成功 | `roomId`, `role`, `playerIndex`, `mode`, `names`, `aiMode`, `gameMode`, `sessionToken`, `reconnected?` |
 | `roomUpdate`    | 房间内任何元数据变化 | `players[]`, `settings`, `names`, `mode`, `allSkills`, `equipped`, `gameMode` |
-| `playerLeft`    | 玩家断开 | `playerIndex`, `role` |
+| `playerDisconnected` | 玩家断开但仍在宽限期 | `playerIndex`, `role`, `graceMs` |
+| `playerReconnected`  | 玩家重连成功 | `playerIndex`, `role` |
+| `playerLeft`    | 玩家彻底离开（宽限期超时或未开局直接断开） | `playerIndex`, `role` |
 | `gameStart`     | 房主发 `startGame` | `snapshot`, `names`, `mode`, `aiMode`, `gameMode` |
 | `restartRequested` | 一方申请重开 | — |
 | `restarted`     | 双方就绪后开新局 | `snapshot`, `names`, `mode`, `gameMode` |

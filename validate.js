@@ -16,6 +16,7 @@ const VALID_TYPES = new Set([
   'create','join','setName','toggleSetting','equipSkills','startGame',
   'place','useSkill','intercept','supernova','dismissNova',
   'restart','chat','undoRequest','undoResponse',
+  'reconnect',
 ]);
 
 const VALID_SKILLS = new Set([
@@ -99,6 +100,11 @@ function validateMessage(msg) {
     }
     case 'undoResponse': {
       if (!isBool(msg.accepted)) return { ok: false, message: 'accepted 必须是布尔' };
+      return { ok: true };
+    }
+    case 'reconnect': {
+      if (!isStr(msg.roomId, 16)) return { ok: false, message: 'roomId 非法' };
+      if (!isStr(msg.sessionToken, 128)) return { ok: false, message: 'sessionToken 非法' };
       return { ok: true };
     }
     // 不带参数的消息
