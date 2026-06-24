@@ -3,8 +3,12 @@
  * 导出 getAIMove(room, difficulty) 作为主入口
  */
 
-const N = 15;
+const CONFIG = require('./config/rules');
+
+const N = CONFIG.board.N;
 const EMPTY = 0, P1 = 1, P2 = 2, P3 = 3, RUIN = 4, RIFT = 5;
+const MOUNTAIN_MIN_TURN = CONFIG.rules.mountainMinTurn;
+const SANDSTORM_CD = CONFIG.skills.sandstorm.cooldown;
 
 // ── 棋型评分 ──
 const SCORE = {
@@ -589,12 +593,13 @@ function shouldUseSkill(room, aiRole, difficulty) {
     bestPlaceScore = Math.max(bestPlaceScore, atk * 1.1 + def);
   }
 
-  // 力拔山兮：回合≥50直接获胜（经典模式）或+3分（血战模式）
-  if (equipped.includes('mountain') && room.totalMoves >= 50) {
+  // 力拔山兮：达到下限回合直接获胜（经典模式）或加分（血战模式）
+  if (equipped.includes('mountain') && room.totalMoves >= MOUNTAIN_MIN_TURN) {
     if (room.gameMode !== 'blood') return { action: 'skill', skill: 'mountain' };
     // Blood mode: use mountain if it would win or if close to target
     const currentBloodScore = room.bloodScores[aiRole] || 0;
-    if (currentBloodScore + 3 >= (room.targetScore || 5)) return { action: 'skill', skill: 'mountain' };
+    const mountainScore = CONFIG.rules.blood.mountainScore;
+    if (currentBloodScore + mountainScore >= (room.targetScore || CONFIG.rules.blood.fiveCount)) return { action: 'skill', skill: 'mountain' };
     // Otherwise still use it if no better move
     if (bestPlaceScore < SCORE.LIVE3) return { action: 'skill', skill: 'mountain' };
   }
@@ -607,7 +612,7 @@ function shouldUseSkill(room, aiRole, difficulty) {
     // 飞沙走石：移除高威胁敌方棋子（降低阈值，更积极使用）
     if (equipped.includes('sandstorm')) {
       const lastUsed = room.sandstormLastUsed[aiRole] || 0;
-      if (room.totalMoves - lastUsed >= 5) {
+      if (room.totalMoves - lastUsed >= SANDSTORM_CD) {
         const target = aiSandstorm(room, aiRole, humanRole);
         if (target) {
           const threatValue = scorePosition(board, target[0], target[1], humanRole);
@@ -666,7 +671,7 @@ function shouldUseSkill(room, aiRole, difficulty) {
   if (difficulty === 'simple') {
     if (equipped.includes('sandstorm')) {
       const lastUsed = room.sandstormLastUsed[aiRole] || 0;
-      if (room.totalMoves - lastUsed >= 5) {
+      if (room.totalMoves - lastUsed >= SANDSTORM_CD) {
         const target = aiSandstorm(room, aiRole, humanRole);
         if (target && scorePosition(board, target[0], target[1], humanRole) >= SCORE.LIVE3) {
           return { action: 'skill', skill: 'sandstorm', r: target[0], c: target[1] };
@@ -674,7 +679,7 @@ function shouldUseSkill(room, aiRole, difficulty) {
       }
     }
     // 简单模式也会用力拔山兮
-    if (equipped.includes('mountain') && room.totalMoves >= 50) {
+    if (equipped.includes('mountain') && room.totalMoves >= MOUNTAIN_MIN_TURN) {
       return { action: 'skill', skill: 'mountain' };
     }
   }

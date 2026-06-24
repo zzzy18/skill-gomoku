@@ -1,6 +1,36 @@
 node_modules/
+.git/
+.gitignore
+.dockerignore
+.github/
+.vscode/
+.idea/
+
+# 文档与说明
+README.md
+LICENSE
+CONTRIBUTING.md
+*.md
+
+# 部署辅助（容器内不需要）
+deploy/
+docker-compose.yml
+Dockerfile
+
+# 历史 / 备份 / 打包产物
 gomoku.html
 go-skill-app/
 .claude/
+.codebuddy/
 *.zip
 *.tar.gz
+*.log
+
+# 测试
+test/
+tests/
+__tests__/
+
+# OS / 编辑器临时文件
+.DS_Store
+Thumbs.db

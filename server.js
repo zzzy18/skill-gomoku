@@ -3,26 +3,79 @@ const fs = require('fs');
 const path = require('path');
 const WebSocket = require('ws');
 const { getAIMove, aiAmbush } = require('./ai-engine');
+const { validateMessage, createRateLimiter } = require('./validate');
+const CONFIG = require('./config/rules');
 
 const PORT = process.env.PORT || 3000;
 
+// ── 静态文件服务（带目录穿越防护）──
+const PUBLIC_DIR = path.resolve(__dirname, 'public');
+const MIME_TYPES = {
+  '.html':'text/html', '.js':'text/javascript', '.mjs':'text/javascript',
+  '.css':'text/css', '.json':'application/json', '.svg':'image/svg+xml',
+  '.png':'image/png', '.jpg':'image/jpeg', '.jpeg':'image/jpeg',
+  '.gif':'image/gif', '.webp':'image/webp', '.ico':'image/x-icon',
+  '.woff':'font/woff', '.woff2':'font/woff2', '.ttf':'font/ttf',
+  '.map':'application/json', '.txt':'text/plain',
+};
+const TEXT_TYPES = new Set(['.html','.js','.mjs','.css','.json','.svg','.txt','.map']);
+const SECURITY_HEADERS = {
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'SAMEORIGIN',
+  'Referrer-Policy': 'no-referrer',
+};
+
+function sendError(res, code, msg) {
+  res.writeHead(code, { 'Content-Type': 'text/plain; charset=utf-8', ...SECURITY_HEADERS });
+  res.end(msg);
+}
+
 const server = http.createServer((req, res) => {
-  let filePath = req.url === '/' ? '/index.html' : req.url;
-  filePath = path.join(__dirname, 'public', filePath);
-  const ext = path.extname(filePath);
-  const mime = {'.html':'text/html','.js':'text/javascript','.css':'text/css'};
-  fs.readFile(filePath, (err, data) => {
-    if (err) { res.writeHead(404); res.end('Not found'); return; }
-    res.writeHead(200, {'Content-Type':(mime[ext]||'text/plain')+'; charset=utf-8'});
-    res.end(data);
+  if (req.method !== 'GET' && req.method !== 'HEAD') return sendError(res, 405, 'Method Not Allowed');
+
+  let urlPath;
+  try {
+    urlPath = decodeURIComponent((req.url || '/').split('?')[0].split('#')[0]);
+  } catch { return sendError(res, 400, 'Bad Request'); }
+  if (urlPath === '/' || urlPath === '') urlPath = '/index.html';
+
+  const filePath = path.resolve(PUBLIC_DIR, '.' + urlPath);
+  // 防止目录穿越：必须仍在 PUBLIC_DIR 内
+  if (filePath !== PUBLIC_DIR && !filePath.startsWith(PUBLIC_DIR + path.sep)) {
+    return sendError(res, 403, 'Forbidden');
+  }
+
+  fs.stat(filePath, (err, stat) => {
+    if (err || !stat.isFile()) return sendError(res, 404, 'Not Found');
+    const ext = path.extname(filePath).toLowerCase();
+    const baseType = MIME_TYPES[ext] || 'application/octet-stream';
+    const contentType = TEXT_TYPES.has(ext) ? baseType + '; charset=utf-8' : baseType;
+    const cache = ext === '.html' ? 'no-cache' : 'public, max-age=3600';
+    res.writeHead(200, { 'Content-Type': contentType, 'Cache-Control': cache, ...SECURITY_HEADERS });
+    if (req.method === 'HEAD') return res.end();
+    fs.createReadStream(filePath).pipe(res);
   });
 });
 
-const wss = new WebSocket.Server({server});
+const wss = new WebSocket.Server({ server, maxPayload: CONFIG.net.maxPayloadBytes });
 
-const N = 15;
+const N = CONFIG.board.N;
 const EMPTY = 0, P1 = 1, P2 = 2, P3 = 3, RUIN = 4, RIFT = 5;
-const DECAY_TURNS = 12, RIFT_INTERVAL = 5, RIFT_DURATION = 4;
+const DECAY_TURNS = CONFIG.rules.decayTurns;
+const RIFT_INTERVAL = CONFIG.rules.rift.interval;
+const RIFT_DURATION = CONFIG.rules.rift.duration;
+const RUIN_DURATION = CONFIG.rules.ruinDuration;
+const MOUNTAIN_MIN_TURN = CONFIG.rules.mountainMinTurn;
+const BLOOD_FIVE_COUNT = CONFIG.rules.blood.fiveCount;
+const BLOOD_SCORE_TO_WIN = CONFIG.rules.blood.scoreToWin;
+const BLOOD_MOUNTAIN_SCORE = CONFIG.rules.blood.mountainScore;
+const COOLDOWN_SANDSTORM = CONFIG.skills.sandstorm.cooldown;
+const COOLDOWN_SWAPPOS = CONFIG.skills.swapPos.cooldown;
+const COOLDOWN_MOVE = CONFIG.skills.move.cooldown;
+const SWAP_DURATION = CONFIG.skills.swap.duration;
+const PENDING_TIMER_MS = CONFIG.skills.pendingTimerMs;
+const NAME_MAX_LEN = CONFIG.limits.nameMaxLen;
+const CHAT_MAX_LEN = CONFIG.limits.chatMaxLen;
 
 // All available skills
 const ALL_SKILLS = [
@@ -438,7 +491,7 @@ function snap(room) {
     skillState: room.skillState,
     sandstormLastUsed: room.sandstormLastUsed,
     gameMode: room.gameMode,
-    bloodWinCondition: { fiveCount: 5, bloodScore: 20 }, // 血战胜利条件
+    bloodWinCondition: { fiveCount: BLOOD_FIVE_COUNT, bloodScore: BLOOD_SCORE_TO_WIN }, // 血战胜利条件
     targetScore: room.targetScore,
     bloodScores: room.bloodScores,
     ambushPhase: ambush ? ambush.phase : null,
@@ -654,7 +707,7 @@ function ageRifts(room) {
 
 function ageRuins(room) {
   for(let r=0;r<N;r++) for(let c=0;c<N;c++){
-    if(room.board[r][c]===RUIN){room.ruinAge[r][c]++;if(room.ruinAge[r][c]>=10){room.board[r][c]=EMPTY;room.ruinAge[r][c]=0;}}
+    if(room.board[r][c]===RUIN){room.ruinAge[r][c]++;if(room.ruinAge[r][c]>=RUIN_DURATION){room.board[r][c]=EMPTY;room.ruinAge[r][c]=0;}}
   }
 }
 
@@ -852,7 +905,7 @@ function bloodClear(room, winCells, player) {
 function checkBloodWin(room, player) {
   const fiveCount = room.scores[player] || 0;
   const bloodScore = room.bloodScores[player] || 0;
-  return fiveCount >= 5 || bloodScore >= 20;
+  return fiveCount >= BLOOD_FIVE_COUNT || bloodScore >= BLOOD_SCORE_TO_WIN;
 }
 
 function handleSupernova(room, player) {
@@ -926,13 +979,13 @@ function handleSkill(room, msg, player) {
     // 飞沙走石：每5回合可用一次
     const lastUsed = room.sandstormLastUsed[player] || 0;
     const movesSinceLastUse = room.totalMoves - lastUsed;
-    if(lastUsed > 0 && movesSinceLastUse < 5){
-      return {error:`飞沙走石冷却中，还需 ${5 - movesSinceLastUse} 回合`};
+    if(lastUsed > 0 && movesSinceLastUse < COOLDOWN_SANDSTORM){
+      return {error:`飞沙走石冷却中，还需 ${COOLDOWN_SANDSTORM - movesSinceLastUse} 回合`};
     }
     room.sandstormLastUsed[player] = room.totalMoves; // 记录使用回合
     room.pendingSkill={type:'sandstorm',player,r,c};
     broadcastAll(room,{type:'skillPending',skill:'sandstorm',player,r,c});
-    room.pendingTimer=setTimeout(()=>{if(room.pendingSkill&&room.pendingSkill.type==='sandstorm')resolveSandstorm(room);},1500);
+    room.pendingTimer=setTimeout(()=>{if(room.pendingSkill&&room.pendingSkill.type==='sandstorm')resolveSandstorm(room);},PENDING_TIMER_MS);
     return {ok:true,action:'skill',skill:'sandstorm',pending:true,player};
   }
 
@@ -967,19 +1020,19 @@ function handleSkill(room, msg, player) {
     delete room.ambushHidden[opKey];
     if(myAmbush) room.ambushHidden[opKey] = myAmbush;
     if(opAmbush) room.ambushHidden[myKey] = opAmbush;
-    ss.swapPos = 4; // cooldown
+    ss.swapPos = COOLDOWN_SWAPPOS; // cooldown
     room.skillState[player] = ss;
     room.pendingSkill = {type:'swapPos',player,myR,myC,opR,opC};
     broadcastAll(room,{type:'skillPending',skill:'swapPos',player,myR,myC,opR,opC});
-    room.pendingTimer=setTimeout(()=>{if(room.pendingSkill&&room.pendingSkill.type==='swapPos')resolveSwapPos(room);},1500);
+    room.pendingTimer=setTimeout(()=>{if(room.pendingSkill&&room.pendingSkill.type==='swapPos')resolveSwapPos(room);},PENDING_TIMER_MS);
     return {ok:true,action:'skill',skill:'swapPos',pending:true,player,myR,myC,opR,opC};
   }
 
   if(sid==='mountain'){
-    if(room.totalMoves<=50) return {error:'回合数不足50'};
+    if(room.totalMoves<=MOUNTAIN_MIN_TURN) return {error:`回合数不足${MOUNTAIN_MIN_TURN}`};
     if(room.gameMode==='blood'){
-      // Blood mode: 力拔山兮 gives 3 points instead of instant win
-      room.bloodScores[player] = (room.bloodScores[player]||0) + 3;
+      // Blood mode: 力拔山兮 gives bonus points instead of instant win
+      room.bloodScores[player] = (room.bloodScores[player]||0) + BLOOD_MOUNTAIN_SCORE;
       room.scores[player]=(room.scores[player]||0)+1;
       const reachedTarget = checkBloodWin(room, player);
       if(reachedTarget) room.gameOver=true;
@@ -997,12 +1050,12 @@ function handleSkill(room, msg, player) {
     if(!room.roles.includes(target) || target===player) return {error:'只能对敌方棋子使用'};
     if(isImpervious(room,r,c)) return {error:'该棋子受无懈可击保护'};
     // Convert to player's stone for 3 turns
-    room.swapMap[`${r},${c}`] = {owner: target, turnsLeft: 3};
+    room.swapMap[`${r},${c}`] = {owner: target, turnsLeft: SWAP_DURATION};
     room.board[r][c] = player;
     room.stoneAge[r][c] = 0;
     room.pendingSkill = {type:'swap',player,r,c,from:target};
     broadcastAll(room,{type:'skillPending',skill:'swap',player,r,c});
-    room.pendingTimer=setTimeout(()=>{if(room.pendingSkill&&room.pendingSkill.type==='swap')resolveSwap(room);},1500);
+    room.pendingTimer=setTimeout(()=>{if(room.pendingSkill&&room.pendingSkill.type==='swap')resolveSwap(room);},PENDING_TIMER_MS);
     return {ok:true,action:'skill',skill:'swap',pending:true,player,r,c,from:target,to:player};
   }
 
@@ -1026,7 +1079,7 @@ function handleSkill(room, msg, player) {
       room.swapMap[`${tr},${tc}`] = room.swapMap[swapKey];
       delete room.swapMap[swapKey];
     }
-    ss.move = 5; // cooldown
+    ss.move = COOLDOWN_MOVE; // cooldown
     room.skillState[player] = ss;
     room.totalMoves++;postMove(room);advanceTurn(room);
     return {ok:true,action:'skill',skill:'move',player,fr,fc,tr,tc,snapshot:snap(room)};
@@ -1117,12 +1170,28 @@ function resetRoom(room) {
 
 // ── WebSocket ──
 wss.on('connection', ws => {
-  ws.isAlive=true;
-  ws.on('pong',()=>{ws.isAlive=true;});
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
+  const allow = createRateLimiter(40, 20); // 容量 40，每秒补 20 个令牌
 
   ws.on('message', raw => {
+    // 限流
+    if (!allow()) {
+      try { ws.send(JSON.stringify({ type: 'error', message: '请求过于频繁，请稍候再试' })); } catch {}
+      return;
+    }
+    // 解析 JSON
     let msg;
-    try{msg=JSON.parse(raw)}catch{return;}
+    try { msg = JSON.parse(raw); } catch {
+      try { ws.send(JSON.stringify({ type: 'error', message: '消息格式错误' })); } catch {}
+      return;
+    }
+    // 统一字段校验
+    const v = validateMessage(msg);
+    if (!v.ok) {
+      try { ws.send(JSON.stringify({ type: 'error', message: v.message })); } catch {}
+      return;
+    }
 
     switch(msg.type){
       case 'create':{
@@ -1166,7 +1235,7 @@ wss.on('connection', ws => {
         room.players[emptyIdx]=ws;
         const assignedRole=room.roles[emptyIdx];
         playerRoom.set(ws,id);
-        if(msg.name&&msg.name.trim()) room.names[assignedRole]=msg.name.trim().slice(0,8);
+        if(msg.name&&msg.name.trim()) room.names[assignedRole]=msg.name.trim().slice(0,NAME_MAX_LEN);
         console.log(`[加入] 房间${id} → 位${emptyIdx}`);
         ws.send(JSON.stringify({type:'joined',roomId:id,role:assignedRole,playerIndex:emptyIdx,mode:room.mode,names:room.names}));
         broadcastAll(room,{type:'roomUpdate',players:room.players.map(Boolean),settings:room.globalSettings,names:room.names,mode:room.mode,allSkills:ALL_SKILLS,gameMode:room.gameMode});
@@ -1176,7 +1245,7 @@ wss.on('connection', ws => {
         const rid=playerRoom.get(ws);if(!rid)return;
         const room=rooms.get(rid);if(!room)return;
         const role=playerRole(ws);if(!role)return;
-        if(msg.name&&msg.name.trim()) room.names[role]=msg.name.trim().slice(0,8);
+        if(msg.name&&msg.name.trim()) room.names[role]=msg.name.trim().slice(0,NAME_MAX_LEN);
         broadcastAll(room,{type:'roomUpdate',players:room.players.map(Boolean),settings:room.globalSettings,names:room.names,mode:room.mode,allSkills:ALL_SKILLS,gameMode:room.gameMode});
         break;
       }
@@ -1365,7 +1434,7 @@ wss.on('connection', ws => {
         const rid=playerRoom.get(ws);if(!rid)return;
         const room=rooms.get(rid);if(!room)return;
         const role=playerRole(ws);if(!role)return;
-        broadcastExcept(room,{type:'chat',from:role,text:(msg.text||'').slice(0,200)},ws);
+        broadcastExcept(room,{type:'chat',from:role,text:(msg.text||'').slice(0,CHAT_MAX_LEN)},ws);
         break;
       }
       case 'undoRequest':{
@@ -1423,11 +1492,36 @@ wss.on('connection', ws => {
       return;
     }
     broadcastAll(room,{type:'playerLeft',playerIndex:pi,role});
-    if(room.players.every(p=>p===null))setTimeout(()=>{if(room.players.every(p=>p===null))rooms.delete(rid);},30000);
+    if(room.players.every(p=>p===null))setTimeout(()=>{if(room.players.every(p=>p===null))rooms.delete(rid);},30 * 1000);
   });
 });
 
-setInterval(()=>{wss.clients.forEach(ws=>{if(!ws.isAlive)return ws.terminate();ws.isAlive=false;ws.ping();});},30000);
-setInterval(()=>{for(const[id,r]of rooms){if(Date.now()-r.lastActivity>3600000&&r.players.every(p=>p===null))rooms.delete(id);}},300000);
+// 仅当作为入口直接运行时，才启动监听与后台定时器；
+// 被 require（例如单元测试）时不副作用，方便复用纯函数。
+if (require.main === module) {
+  setInterval(()=>{wss.clients.forEach(ws=>{if(!ws.isAlive)return ws.terminate();ws.isAlive=false;ws.ping();});},CONFIG.net.heartbeatMs);
+  setInterval(()=>{for(const[id,r]of rooms){if(Date.now()-r.lastActivity>CONFIG.net.roomIdleMaxMs&&r.players.every(p=>p===null))rooms.delete(id);}},CONFIG.net.roomIdleSweepMs);
 
-server.listen(PORT,()=>console.log(`星虚对弈服务器: http://localhost:${PORT}`));
+  server.listen(PORT,()=>console.log(`星虚对弈服务器: http://localhost:${PORT}`));
+}
+
+// 导出供单元测试使用的纯函数与常量
+module.exports = {
+  // 常量
+  N, EMPTY, P1, P2, P3, RUIN, RIFT,
+  // 房间
+  createRoom, resetRoom, initSkillState,
+  // 棋局
+  findLines, applyDevour, applyDecay, spawnRifts, ageRifts, ageRuins,
+  processSwaps, postMove, advanceTurn,
+  // 落子 / 技能 / 胜负
+  handlePlace, handleSkill, handleSupernova, handleDismissNova,
+  handleAmbushFake, handleIntercept, resolveSandstorm, resolveSwap, resolveSwapPos,
+  bloodClear, checkBloodWin, isImpervious,
+  // 悔棋
+  undoLastMove, handleUndoRequest, handleUndoResponse,
+  // 快照
+  snap, personalSnap,
+  // 全局表
+  rooms, ALL_SKILLS,
+};
