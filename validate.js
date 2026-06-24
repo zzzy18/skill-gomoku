@@ -20,10 +20,12 @@ const VALID_TYPES = new Set([
 ]);
 
 const VALID_SKILLS = new Set([
-  'sandstorm','swapPos','intercept','mountain','swap','move','impervious','ambush'
+  'sandstorm','swapPos','intercept','mountain','swap','move','impervious','ambush',
+  // ── 扩展技能 ──
+  'barrier','phoenix','meteor',
 ]);
 
-const VALID_SETTING_KEYS = new Set(['devour','decay','nova','rift']);
+const VALID_SETTING_KEYS = new Set(['devour','decay','nova','rift','gravity']);
 const VALID_DIFFICULTY = new Set(['simple','medium','hard']);
 const VALID_GAME_MODES = new Set(['classic','blood']);
 
@@ -78,6 +80,9 @@ function validateMessage(msg) {
       switch (msg.skill) {
         case 'sandstorm':
         case 'swap':
+        case 'barrier':
+        case 'phoenix':
+        case 'meteor':
           if (!isCell(msg.r) || !isCell(msg.c)) return { ok: false, message: '位置非法' };
           break;
         case 'swapPos':

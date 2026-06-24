@@ -9,6 +9,7 @@ const DECAY_TURNS    = CONFIG.rules.decayTurns;
 const RIFT_INTERVAL  = CONFIG.rules.rift.interval;
 const RIFT_DURATION  = CONFIG.rules.rift.duration;
 const RUIN_DURATION  = CONFIG.rules.ruinDuration;
+const GRAVITY_THRESHOLD = (CONFIG.rules.gravity && CONFIG.rules.gravity.surroundThreshold) || 3;
 
 /**
  * 在 (r,c) 处沿四个方向查找指定长度的连子组合（用于 4 连/5 连判定）
@@ -158,6 +159,38 @@ function processSwaps(room) {
   return toRevert.length;
 }
 
+/**
+ * 全局法则 · 引力（gravity）
+ * 玩家落子后，检查与落子点正交相邻的裂隙(RIFT)：
+ * 若该裂隙被同一玩家棋子从其余方向 ≥ GRAVITY_THRESHOLD 面包围，则坍缩为废墟(RUIN)。
+ * 与 phoenix 联动：留下的废墟有机会被复活成棋子。
+ * 仅在 room.globalSettings.gravity 开启时生效。
+ */
+function applyGravity(room, r, c, player) {
+  if (!room.globalSettings || !room.globalSettings.gravity) return [];
+  const dirs = [[0,1],[0,-1],[1,0],[-1,0]];
+  const collapsed = [];
+  for (const [dr, dc] of dirs) {
+    const nr = r + dr, nc = c + dc;
+    if (nr < 0 || nr >= N || nc < 0 || nc >= N) continue;
+    if (room.board[nr][nc] !== RIFT) continue;
+    // 数 player 在该裂隙四周的棋子数
+    let surr = 0;
+    for (const [dr2, dc2] of dirs) {
+      const ar = nr + dr2, ac = nc + dc2;
+      if (ar < 0 || ar >= N || ac < 0 || ac >= N) continue;
+      if (room.board[ar][ac] === player) surr++;
+    }
+    if (surr >= GRAVITY_THRESHOLD) {
+      room.board[nr][nc] = RUIN;
+      room.riftAge[nr][nc] = 0;
+      room.ruinAge[nr][nc] = 0;
+      collapsed.push([nr, nc]);
+    }
+  }
+  return collapsed;
+}
+
 /** 每手棋完成后的统一收尾：法则结算 + 冷却递减 + 终局检测 */
 function postMove(room) {
   if (room.globalSettings.decay) applyDecay(room);
@@ -172,9 +205,19 @@ function postMove(room) {
     const ss = room.skillState[role];
     if (ss) {
       for (const sid of Object.keys(ss)) {
-        if (sid === 'move' && ss[sid] > 0) ss[sid]--;
-        if (sid === 'swapPos' && ss[sid] > 0) ss[sid]--;
+        if ((sid === 'move' || sid === 'swapPos' || sid === 'barrier'
+             || sid === 'phoenix' || sid === 'meteor') && ss[sid] > 0) {
+          ss[sid]--;
+        }
       }
+    }
+  }
+  // 临时护盾计时
+  if (room.tempImpervious) {
+    for (const key of Object.keys(room.tempImpervious)) {
+      const t = room.tempImpervious[key];
+      t.turnsLeft--;
+      if (t.turnsLeft <= 0) delete room.tempImpervious[key];
     }
   }
   // 棋盘填满 → 终局
@@ -198,8 +241,15 @@ function advanceTurn(room) {
   room.currentPlayer = room.roles[0];
 }
 
-/** 无懈可击保护判定 */
+/** 无懈可击 / 临时护盾 判定 */
 function isImpervious(room, r, c) {
+  // 临时护盾（金钟罩 barrier）
+  if (room.tempImpervious) {
+    const key = `${r},${c}`;
+    const t = room.tempImpervious[key];
+    if (t && t.turnsLeft > 0 && t.owner === room.board[r][c]) return true;
+  }
+  // 被动技能：装备 impervious
   const owner = room.board[r][c];
   if (!room.roles.includes(owner)) return false;
   const equipped = room.equipped[owner] || [];
@@ -210,4 +260,5 @@ module.exports = {
   findLines, applyDevour,
   applyDecay, spawnRifts, ageRifts, ageRuins, processSwaps,
   postMove, advanceTurn, isImpervious,
+  applyGravity,
 };

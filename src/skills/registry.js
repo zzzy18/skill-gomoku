@@ -45,6 +45,10 @@ register(require('./impl/mountain'));
 register(require('./impl/swap'));
 register(require('./impl/move'));
 register(require('./impl/ambush'));
+// ── 扩展技能 ──
+register(require('./impl/barrier'));
+register(require('./impl/phoenix'));
+register(require('./impl/meteor'));
 // intercept / impervious 是被动技能，不通过 dispatch 触发；
 // 但注册一个空壳便于"装备/未装备"统一查询
 register({ id: 'intercept',  apply: () => ({ error: '擒拿为被动技能，无需主动触发' }) });

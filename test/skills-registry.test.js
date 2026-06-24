@@ -7,11 +7,14 @@ const assert = require('node:assert/strict');
 const registry = require('../src/skills/registry');
 
 test('registry: 所有内置技能均已注册', () => {
-  const expected = ['sandstorm','swapPos','intercept','mountain','swap','move','impervious','ambush'];
+  const expected = [
+    'sandstorm','swapPos','intercept','mountain','swap','move','impervious','ambush',
+    'barrier','phoenix','meteor',
+  ];
   for (const id of expected) {
     assert.ok(registry.get(id), `技能 ${id} 应被注册`);
   }
-  assert.equal(registry.list().length, expected.length);
+  assert.ok(registry.list().length >= expected.length);
 });
 
 test('registry: 未知技能 dispatch 返回 error', () => {

@@ -25,6 +25,11 @@ module.exports = {
       scoreToWin: 20,   // 血战模式：累计血战分胜利门槛
       mountainScore: 3, // 血战模式下力拔山兮直接加分
     },
+
+    // 全局法则：引力 — 落子后，被己方 3 面正交包围的裂隙坍缩为废墟
+    gravity: {
+      surroundThreshold: 3, // 至少几面包围才坍缩
+    },
   },
 
   // 技能冷却 / 限制
@@ -34,9 +39,21 @@ module.exports = {
     move:      { cooldown: 5 },     // 斗转星移：冷却 5 回合
     swap:      { duration: 3 },     // 偷梁换柱：维持 3 回合
     ambush:    { globalLimit: 1 },  // 暗度陈仓：全局只能用一次
+    // ── 扩展技能 ──
+    barrier:   { cooldown: 6, duration: 3 },  // 金钟罩：冷却 6 回合，护盾持续 3 回合
+    phoenix:   { cooldown: 8 },               // 凤凰涅槃：冷却 8 回合
+    meteor:    { cooldown: 10, radius: 1 },   // 陨石坠落：冷却 10 回合，半径 1（3x3）
 
     // 待结算技能的"擒拿响应窗口"（毫秒）
     pendingTimerMs: 1500,
+  },
+
+  // AI 决策阈值（可调战术权重，不改变规则）
+  ai: {
+    atkWeightClassic: 1.1,
+    atkWeightBlood:   1.4,
+    ambushMinTurn:    15,   // 至少在多少回合后才考虑用暗度陈仓
+    ambushProbability: 0.4, // 满足条件后实际使用概率
   },
 
   // 网络 / 会话

@@ -5,7 +5,8 @@ const PC={[P1]:'255,216,155',[P2]:'122,95,255',[P3]:'80,232,192'};
 const PCSS={[P1]:'c1',[P2]:'c2',[P3]:'c3'};
 const PSCSS={[P1]:'pc1',[P2]:'pc2',[P3]:'pc3'};
 
-const ALL_SKILLS=[
+// 技能定义（默认 fallback；服务端会通过 roomUpdate.allSkills 推送权威列表，含扩展技能）
+let ALL_SKILLS=[
   {id:'sandstorm',name:'飞沙走石',type:'active',desc:'移除一枚棋子并留下废墟，每5回合可用一次'},
   {id:'swapPos',name:'移形换影',type:'active',desc:'选择己方一枚棋子与对手一枚棋子交换位置，冷却4回合'},
   {id:'intercept',name:'擒拿',type:'passive',desc:'飞沙走石、偷梁换柱、移形换影发动时可打断'},
@@ -217,6 +218,8 @@ function handleMsg(m){
       names={...DEFAULT_NAMES,...(m.names||{})};gameMode=m.mode||2;
       if(m.aiMode)aiMode=true;
       if(m.gameMode) bloodMode=m.gameMode==='blood';
+      // 服务端权威技能表（含扩展技能）
+      if(Array.isArray(m.allSkills) && m.allSkills.length){ ALL_SKILLS = m.allSkills; }
       // Update equipped display
       if(m.equipped&&m.equipped[myRole]) myEquipped=m.equipped[myRole];
       buildRoomUI(m);
@@ -244,6 +247,20 @@ function handleMsg(m){
         // 只对使用者自己显示通知，对手不知道
         if(m.player===myRole) addSystemChat(`你启动了「暗度陈仓」，现在下假棋子（对手可见但不计胜利）`);
       }
+        // ── 扩展技能事件 ──
+        if(m.skill==='barrier'&&m.player){
+          notify(`${names[m.player]||'?'} 金钟罩护盾`,'info');
+          addSystemChat(`${names[m.player]||'?'} 使用了「金钟罩」，棋子获得 ${m.duration||3} 回合护盾`);
+        }
+        if(m.skill==='phoenix'&&m.player){
+          notify(`${names[m.player]||'?'} 凤凰涅槃`,'info');
+          addSystemChat(`${names[m.player]||'?'} 使用了「凤凰涅槃」，(${m.r+1},${m.c+1}) 废墟复活！`);
+        }
+        if(m.skill==='meteor'&&m.player){
+          const n = (m.destroyed||[]).length;
+          notify(`${names[m.player]||'?'} 陨石坠落 — ${n}子`,'warn');
+          addSystemChat(`${names[m.player]||'?'} 使用了「陨石坠落」，摧毁 ${n} 枚敌方棋子`);
+        }
         if(m.skill==='sandstorm'&&m.pending&&m.player){addSystemChat(`${names[m.player]||'?'} 使用了「飞沙走石」...`);}
         // Blood mode: five-in-a-row clear + score
         if(m.bloodMode&&m.bloodClear){
@@ -456,8 +473,8 @@ function buildRoomUI(m){
 
   // Settings
   html+=`<div class="settings-section"><h3>全局法则 (创建者可调整)</h3>`;
-  const sLabels={devour:'吞噬',decay:'衰变',nova:'超新星',rift:'裂隙'};
-  const sDescs={devour:'三面被围即转化',decay:'12手后化为废墟',nova:'四连珠可引爆清场',rift:'每5手随机封锁'};
+  const sLabels={devour:'吞噬',decay:'衰变',nova:'超新星',rift:'裂隙',gravity:'引力'};
+  const sDescs={devour:'三面被围即转化',decay:'12手后化为废墟',nova:'四连珠可引爆清场',rift:'每5手随机封锁',gravity:'落子点旁裂隙被三面围则坍缩为废墟'};
   for(const [k,v] of Object.entries(m.settings)){
     // 血战模式禁用超新星
     const disabledKey=(k==='nova'&&bloodMode);
@@ -521,7 +538,30 @@ function useSkill(skill,extra){
 function enterSandstormMode(){sandstormMode=true;swapMode=false;moveFromMode=false;bCvs.classList.add('target-mode','sandstorm');notify('点击要移除的棋子','warn')}
 function enterSwapMode(){swapMode=true;sandstormMode=false;moveFromMode=false;bCvs.classList.add('target-mode','sandstorm');notify('点击要转化的敌方棋子','warn')}
 function enterMoveMode(){moveFromMode=true;sandstormMode=false;swapMode=false;bCvs.classList.add('target-mode','sandstorm');notify('点击要移动的棋子','warn')}
-function cancelTargetMode(){sandstormMode=false;swapMode=false;moveFromMode=false;moveFrom=null;bCvs.classList.remove('target-mode','sandstorm')}
+function cancelTargetMode(){sandstormMode=false;swapMode=false;moveFromMode=false;moveFrom=null;barrierMode=false;phoenixMode=false;meteorMode=false;bCvs.classList.remove('target-mode','sandstorm')}
+
+// ── 扩展技能交互 ──
+let barrierMode=false, phoenixMode=false, meteorMode=false;
+function enterBarrierMode(){barrierMode=true;phoenixMode=false;meteorMode=false;cancelOtherSkillModes('barrier');bCvs.classList.add('target-mode');notify('点击要施加护盾的己方棋子','warn')}
+function enterPhoenixMode(){phoenixMode=true;barrierMode=false;meteorMode=false;cancelOtherSkillModes('phoenix');bCvs.classList.add('target-mode');notify('点击一枚废墟（衰变后的棋子）','warn')}
+function enterMeteorMode(){meteorMode=true;barrierMode=false;phoenixMode=false;cancelOtherSkillModes('meteor');bCvs.classList.add('target-mode');notify('点击中心格（3×3 内敌方棋子会被陨石击毁）','warn')}
+function cancelOtherSkillModes(except){
+  sandstormMode=false; swapMode=false; moveFromMode=false; moveFrom=null;
+  if(except!=='barrier') barrierMode=false;
+  if(except!=='phoenix') phoenixMode=false;
+  if(except!=='meteor')  meteorMode=false;
+}
+
+// 通用冷却进度条
+function cooldownBar(left, total, color){
+  const pct = (total - left) / total * 100;
+  return `<div style="display:flex;align-items:center;gap:4px;margin-top:2px">
+    <div style="flex:1;height:4px;border-radius:2px;background:rgba(255,255,255,.08);overflow:hidden">
+      <div style="width:${pct}%;height:100%;background:${color};border-radius:2px"></div>
+    </div>
+    <span style="font-size:8px;opacity:.4">${left}</span>
+  </div>`;
+}
 
 function useAmbush(){useSkill('ambush',{})}
 
@@ -600,8 +640,8 @@ function buildSidePanel(){
 
   // Global rules
   html+=`<div class="card"><h3>全局法则</h3>`;
-  const gL={devour:'吞噬',decay:'衰变',nova:'超新星',rift:'裂隙'};
-  const gD={devour:'三面被围即转化',decay:'12手后化为废墟',nova:'四连珠可引爆',rift:'每5手随机封锁'};
+  const gL={devour:'吞噬',decay:'衰变',nova:'超新星',rift:'裂隙',gravity:'引力'};
+  const gD={devour:'三面被围即转化',decay:'12手后化为废墟',nova:'四连珠可引爆',rift:'每5手随机封锁',gravity:'裂隙坍缩为废墟'};
   const isBloodGame=s.gameMode==='blood';
   for(const [k,v] of Object.entries(s.globalSettings)){
     if(k==='nova'&&isBloodGame) continue; // blood mode hides nova
@@ -660,6 +700,15 @@ function buildSidePanel(){
       btnHtml=`<span style="font-size:9px;opacity:.4">被动 — 己方棋子免疫技能</span>`;
     }else if(sid==='ambush'){
       btnHtml=`<button class="skill-btn s_ambush" onclick="useAmbush()" ${disabled?'disabled':''}>暗度陈仓</button>`;
+    }else if(sid==='barrier'){
+      if(skInfo>0) btnHtml=cooldownBar(skInfo, 6, '#aaccff');
+      else btnHtml=`<button class="skill-btn s_barrier" onclick="enterBarrierMode()" ${disabled?'disabled':''}>选择己方棋子</button>`;
+    }else if(sid==='phoenix'){
+      if(skInfo>0) btnHtml=cooldownBar(skInfo, 8, '#ff8844');
+      else btnHtml=`<button class="skill-btn s_phoenix" onclick="enterPhoenixMode()" ${disabled?'disabled':''}>选择废墟</button>`;
+    }else if(sid==='meteor'){
+      if(skInfo>0) btnHtml=cooldownBar(skInfo, 10, '#ffcc55');
+      else btnHtml=`<button class="skill-btn s_meteor" onclick="enterMeteorMode()" ${disabled?'disabled':''}>选择中心格</button>`;
     }
 
     html+=`<div class="skill-card"><h4 style="color:${skillColor(sid)}">${sk.name} <span style="font-size:8px;opacity:.3">${sk.type==='passive'?'被动':'主动'}</span></h4>
@@ -695,7 +744,7 @@ function buildSidePanel(){
   const nc=document.getElementById('chat-messages');if(nc){nc.innerHTML=chatHTML;nc.scrollTop=nc.scrollHeight}
 }
 
-function skillColor(sid){return{sandstorm:'#ffaa55',swapPos:'#66bbff',intercept:'#ff7766',mountain:'#ccaa55',swap:'#cc77ff',move:'#66ccff',impervious:'#aaa',ambush:'#55cc77'}[sid]||'#d8d0c4'}
+function skillColor(sid){return{sandstorm:'#ffaa55',swapPos:'#66bbff',intercept:'#ff7766',mountain:'#ccaa55',swap:'#cc77ff',move:'#66ccff',impervious:'#aaa',ambush:'#55cc77',barrier:'#aaccff',phoenix:'#ff8844',meteor:'#ffcc55'}[sid]||'#d8d0c4'}
 
 function showNovaBtn(cells){
   const btn=document.getElementById('nova-btn');const midR=cells[Math.floor(cells.length/2)][0];const midC=cells[Math.floor(cells.length/2)][1];
@@ -749,6 +798,21 @@ function handleBoardClick(pos){
       moveFromMode=false;bCvs.classList.remove('target-mode','sandstack');
       useSkill('move',{fr:moveFrom.r,fc:moveFrom.c,tr:pos.r,tc:pos.c});moveFrom=null;
     }else notify('目标必须为空位','error');
+    return;
+  }
+  // ── 扩展技能 ──
+  if(barrierMode){
+    if(snap.board[pos.r][pos.c]===myRole){barrierMode=false;bCvs.classList.remove('target-mode');useSkill('barrier',{r:pos.r,c:pos.c});}
+    else notify('只能选择己方棋子','error');
+    return;
+  }
+  if(phoenixMode){
+    if(snap.board[pos.r][pos.c]===4){phoenixMode=false;bCvs.classList.remove('target-mode');useSkill('phoenix',{r:pos.r,c:pos.c});}
+    else notify('只能选择废墟（淡灰色方块）','error');
+    return;
+  }
+  if(meteorMode){
+    meteorMode=false;bCvs.classList.remove('target-mode');useSkill('meteor',{r:pos.r,c:pos.c});
     return;
   }
   // SwapPos step 1: select own stone
@@ -842,6 +906,17 @@ function drawBoard(t){
   for(let i=0;i<N;i++){const p=pad+i*cellSize;bCtx.beginPath();bCtx.moveTo(p,pad);bCtx.lineTo(p,pad+(N-1)*cellSize);bCtx.stroke();bCtx.beginPath();bCtx.moveTo(pad,p);bCtx.lineTo(pad+(N-1)*cellSize,p);bCtx.stroke();}
   bCtx.fillStyle=`rgba(200,190,175,${breathe*1.8})`;for(const r of [3,7,11])for(const c of [3,7,11]){bCtx.beginPath();bCtx.arc(pad+c*cellSize,pad+r*cellSize,2.5,0,Math.PI*2);bCtx.fill();}
 
+  // ── 扩展技能视觉：金钟罩护盾光环 ──
+  if(snap.tempImpervious){
+    for(const key of Object.keys(snap.tempImpervious)){
+      const [tr, tc] = key.split(',').map(Number);
+      const tx = pad + tc * cellSize, ty = pad + tr * cellSize;
+      const pulse = 0.5 + 0.3 * Math.sin(t * 0.005);
+      bCtx.strokeStyle = `rgba(170,204,255,${pulse})`;
+      bCtx.lineWidth = 2;
+      bCtx.beginPath(); bCtx.arc(tx, ty, cellSize * 0.55, 0, Math.PI * 2); bCtx.stroke();
+    }
+  }
   // Hover
   if(hoverPos&&!gameOver){
     const hx=pad+hoverPos.c*cellSize,hy=pad+hoverPos.r*cellSize;
@@ -850,6 +925,19 @@ function drawBoard(t){
     else if(moveFromMode){bCtx.strokeStyle='rgba(100,200,255,0.6)';bCtx.lineWidth=2;bCtx.beginPath();bCtx.arc(hx,hy,cellSize*.48,0,Math.PI*2);bCtx.stroke();}
     else if(swapPosStep===1&&board[hoverPos.r][hoverPos.c]===myRole){bCtx.strokeStyle='rgba(80,180,255,0.6)';bCtx.lineWidth=2;bCtx.beginPath();bCtx.arc(hx,hy,cellSize*.48,0,Math.PI*2);bCtx.stroke();}
     else if(swapPosStep===2&&roles.includes(board[hoverPos.r][hoverPos.c])&&board[hoverPos.r][hoverPos.c]!==myRole){bCtx.strokeStyle='rgba(80,180,255,0.6)';bCtx.lineWidth=2;bCtx.setLineDash([4,4]);bCtx.beginPath();bCtx.arc(hx,hy,cellSize*.48,0,Math.PI*2);bCtx.stroke();bCtx.setLineDash([]);}
+    else if(barrierMode && board[hoverPos.r][hoverPos.c]===myRole){
+      bCtx.strokeStyle='rgba(170,204,255,0.7)';bCtx.lineWidth=2;bCtx.beginPath();bCtx.arc(hx,hy,cellSize*.55,0,Math.PI*2);bCtx.stroke();
+    }
+    else if(phoenixMode && board[hoverPos.r][hoverPos.c]===4){ // RUIN
+      bCtx.strokeStyle='rgba(255,136,68,0.7)';bCtx.lineWidth=2;bCtx.beginPath();bCtx.arc(hx,hy,cellSize*.5,0,Math.PI*2);bCtx.stroke();
+    }
+    else if(meteorMode){
+      // 3x3 红色提示
+      bCtx.fillStyle='rgba(255,80,80,0.10)';
+      bCtx.fillRect(hx-cellSize*1.5, hy-cellSize*1.5, cellSize*3, cellSize*3);
+      bCtx.strokeStyle='rgba(255,150,80,0.8)';bCtx.lineWidth=2;
+      bCtx.strokeRect(hx-cellSize*1.5, hy-cellSize*1.5, cellSize*3, cellSize*3);
+    }
     else if(!sandstormMode&&!swapMode&&!moveFromMode&&currentPlayer===myRole&&board[hoverPos.r][hoverPos.c]===EMPTY){
       const hc=PC[myRole];const hg=bCtx.createRadialGradient(hx,hy,0,hx,hy,cellSize*.6);
       hg.addColorStop(0,`rgba(${hc},0.12)`);hg.addColorStop(1,`rgba(${hc},0)`);

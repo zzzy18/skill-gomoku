@@ -10,6 +10,10 @@ const ALL_SKILLS = [
   { id: 'move',       name: '斗转星移', type: 'active',  desc: '移动任意一颗棋子到空位，冷却5回合' },
   { id: 'impervious', name: '无懈可击', type: 'passive', desc: '己方棋子无法被技能选中' },
   { id: 'ambush',     name: '暗度陈仓', type: 'active',  desc: '连下2子：第1子为假(对手可见但不计胜利)，第2子为真(对手不可见)，全局只能用一次' },
+  // ── 扩展技能 ──
+  { id: 'barrier',    name: '金钟罩',   type: 'active',  desc: '选一枚己方棋子，3 回合内免疫所有技能；冷却 6 回合' },
+  { id: 'phoenix',    name: '凤凰涅槃', type: 'active',  desc: '将一枚己方废墟（衰变残留）复原为棋子；冷却 8 回合' },
+  { id: 'meteor',     name: '陨石坠落', type: 'active',  desc: '选中心格 → 把以它为中心的 3×3 区域内全部敌方棋子变为裂隙；冷却 10 回合' },
 ];
 
 module.exports = { ALL_SKILLS };

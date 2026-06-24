@@ -18,3 +18,7 @@ Thumbs.db
 
 # Local scratch
 _t*.txt
+_r*.txt
+_s*.log
+_se*.log
+

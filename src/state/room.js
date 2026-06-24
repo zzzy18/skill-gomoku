@@ -20,6 +20,7 @@ function createRoom(id, mode, names, gameMode) {
     ruinAge:  Array.from({ length: N }, () => Array(N).fill(0)),
     swapMap: {},            // "r,c" -> { owner, turnsLeft }
     ambushHidden: {},       // "r,c" -> 真棋子归属 / "fake_r_c" -> 假棋子归属
+    tempImpervious: {},     // "r,c" -> { owner, turnsLeft }  局部护盾（金钟罩）
     currentPlayer: P1,
     totalMoves: 0,
     history: [],
@@ -29,7 +30,7 @@ function createRoom(id, mode, names, gameMode) {
     scores: {},
     ready: new Array(count).fill(false),
     gameStarted: false,
-    globalSettings: { devour: true, decay: true, nova: true, rift: true },
+    globalSettings: { devour: true, decay: true, nova: true, rift: true, gravity: false },
     equipped: {},           // role -> [skillId, skillId]
     skillState: {},         // role -> { [skillId]: cooldown }
     skipNext: new Set(),
@@ -64,6 +65,7 @@ function resetRoom(room) {
   room.ruinAge  = Array.from({ length: N }, () => Array(N).fill(0));
   room.swapMap = {};
   room.ambushHidden = {};
+  room.tempImpervious = {};
   room.currentPlayer = P1;
   room.totalMoves = 0;
   room.history = [];

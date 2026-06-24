@@ -85,6 +85,7 @@ const {
   findLines, applyDevour,
   applyDecay, spawnRifts, ageRifts, ageRuins, processSwaps,
   postMove, advanceTurn, isImpervious,
+  applyGravity,
 } = require('./src/rules/board');
 const { bloodClear, checkBloodWin } = require('./src/rules/blood');
 const { snap, personalSnap } = require('./src/rules/snapshot');
@@ -311,6 +312,12 @@ async function handleAISkill(room, aiRole, decision, roomId, difficulty) {
     case 'ambush':
       // AI使用暗度陈仓：先激活技能，再落假棋子和真棋子
       break;
+    case 'barrier':
+    case 'phoenix':
+    case 'meteor':
+      msg.r = decision.r;
+      msg.c = decision.c;
+      break;
   }
 
   const result = handleSkill(room, msg, aiRole);
@@ -519,8 +526,12 @@ function handlePlace(room, r, c, player) {
     }
   }
 
+  // 全局法则 · 引力：未结束时触发裂隙坍缩为废墟
+  let gravity = [];
+  if(!room.gameOver) gravity = applyGravity(room, r, c, player);
+
   if(!room.gameOver){postMove(room);if(!room.novaLine)advanceTurn(room);}
-  return {ok:true,devoured,action:'place',snapshot:snap(room)};
+  return {ok:true,devoured,gravity,action:'place',snapshot:snap(room)};
 }
 
 // Blood mode: clear cells around five-in-a-row and award score

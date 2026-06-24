@@ -9,6 +9,10 @@ const N = CONFIG.board.N;
 const EMPTY = 0, P1 = 1, P2 = 2, P3 = 3, RUIN = 4, RIFT = 5;
 const MOUNTAIN_MIN_TURN = CONFIG.rules.mountainMinTurn;
 const SANDSTORM_CD = CONFIG.skills.sandstorm.cooldown;
+const AI_ATK_CLASSIC = CONFIG.ai.atkWeightClassic;
+const AI_ATK_BLOOD   = CONFIG.ai.atkWeightBlood;
+const AI_AMBUSH_MIN_TURN = CONFIG.ai.ambushMinTurn;
+const AI_AMBUSH_PROB     = CONFIG.ai.ambushProbability;
 
 // ── 棋型评分 ──
 const SCORE = {
@@ -231,7 +235,7 @@ function getMediumMove(room, aiRole, humanRole) {
 
   // Blood mode: more aggressive — weight attack higher
   const isBlood = room.gameMode === 'blood';
-  const atkWeight = isBlood ? 1.4 : 1.1;
+  const atkWeight = isBlood ? AI_ATK_BLOOD : AI_ATK_CLASSIC;
 
   let bestScore = -Infinity;
   let bestMove = candidates[0];
@@ -277,7 +281,7 @@ function getHardMove(room, aiRole, humanRole) {
 
   // 对候选位置打分排序，只搜索前15
   const isBlood = room.gameMode === 'blood';
-  const atkWeight = isBlood ? 1.4 : 1.1;
+  const atkWeight = isBlood ? AI_ATK_BLOOD : AI_ATK_CLASSIC;
   const scored = candidates.map(([r, c]) => {
     const atk = evaluateMove(board, r, c, aiRole);
     const def = evaluateMove(board, r, c, humanRole);
@@ -658,12 +662,60 @@ function shouldUseSkill(room, aiRole, difficulty) {
     // 暗度陈仓：中后期有一定概率使用（增加使用概率）
     if (equipped.includes('ambush') && !room.ambushUsed.has(aiRole)) {
       // 20回合后有40%概率使用，创造双杀机会
-      if (room.totalMoves > 15 && Math.random() < 0.4) {
+      if (room.totalMoves > AI_AMBUSH_MIN_TURN && Math.random() < AI_AMBUSH_PROB) {
         const ambushPlan = aiAmbush(room, aiRole, humanRole);
         if (ambushPlan) {
           return { action: 'skill', skill: 'ambush', fakePos: ambushPlan.fakePos, realPos: ambushPlan.realPos };
         }
       }
+    }
+
+    // ── 扩展技能 ──
+    // 金钟罩：保护当前最有价值的己方棋子（活三/冲四等）
+    if (equipped.includes('barrier') && (ss.barrier || 0) <= 0) {
+      let bestPos = null, bestVal = SCORE.LIVE3;
+      for (let r = 0; r < N; r++) {
+        for (let c = 0; c < N; c++) {
+          if (board[r][c] !== aiRole) continue;
+          if (isImpervious(room, r, c)) continue;
+          const v = scorePosition(board, r, c, aiRole);
+          if (v > bestVal) { bestVal = v; bestPos = [r, c]; }
+        }
+      }
+      if (bestPos) return { action: 'skill', skill: 'barrier', r: bestPos[0], c: bestPos[1] };
+    }
+
+    // 凤凰涅槃：找一个己方残留的废墟（被衰变的曾经的己方棋子）
+    // 简化版：找一个能立刻形成 LIVE3 及以上威胁的废墟位置
+    if (equipped.includes('phoenix') && (ss.phoenix || 0) <= 0) {
+      const RUIN = 4;
+      let bestPos = null, bestVal = SCORE.LIVE3;
+      for (let r = 0; r < N; r++) {
+        for (let c = 0; c < N; c++) {
+          if (board[r][c] !== RUIN) continue;
+          const v = evaluateMove(board, r, c, aiRole);
+          if (v > bestVal) { bestVal = v; bestPos = [r, c]; }
+        }
+      }
+      if (bestPos) return { action: 'skill', skill: 'phoenix', r: bestPos[0], c: bestPos[1] };
+    }
+
+    // 陨石坠落：找一个 3x3 内敌子最多的中心
+    if (equipped.includes('meteor') && (ss.meteor || 0) <= 0) {
+      let bestCenter = null, bestKills = 1;  // 至少能毁 2 个才用
+      for (let r = 1; r < N - 1; r++) {
+        for (let c = 1; c < N - 1; c++) {
+          let kills = 0;
+          for (let dr = -1; dr <= 1; dr++) {
+            for (let dc = -1; dc <= 1; dc++) {
+              const cell = board[r + dr][c + dc];
+              if (cell === humanRole && !isImpervious(room, r + dr, c + dc)) kills++;
+            }
+          }
+          if (kills > bestKills) { bestKills = kills; bestCenter = [r, c]; }
+        }
+      }
+      if (bestCenter) return { action: 'skill', skill: 'meteor', r: bestCenter[0], c: bestCenter[1] };
     }
   }
 
