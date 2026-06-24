@@ -80,6 +80,7 @@ const CHAT_MAX_LEN = CONFIG.limits.chatMaxLen;
 
 // All available skills
 const { ALL_SKILLS } = require('./src/skills/all');
+const skillRegistry = require('./src/skills/registry');
 const {
   findLines, applyDevour,
   applyDecay, spawnRifts, ageRifts, ageRuins, processSwaps,
@@ -580,141 +581,28 @@ function resolveSwap(room) {
 }
 
 function handleSkill(room, msg, player) {
-  if(room.gameOver) return {error:'游戏已结束'};
-  if(room.currentPlayer!==player) return {error:'不是你的回合'};
-  if(room.pendingSkill) return {error:'等待技能结算'};
+  if (room.gameOver) return { error: '游戏已结束' };
+  if (room.currentPlayer !== player) return { error: '不是你的回合' };
+  if (room.pendingSkill) return { error: '等待技能结算' };
 
   const sid = msg.skill;
   const equipped = room.equipped[player] || [];
-  if (!equipped.includes(sid)) return {error:'未装备该技能'};
+  if (!equipped.includes(sid)) return { error: '未装备该技能' };
 
-  if(sid==='sandstorm'){
-    const {r,c}=msg;
-    if(r<0||r>=N||c<0||c>=N) return {error:'无效位置'};
-    if(!room.roles.includes(room.board[r][c])) return {error:'该位置无棋子'};
-    if(isImpervious(room,r,c)) return {error:'该棋子受无懈可击保护'};
-    // 飞沙走石：每5回合可用一次
-    const lastUsed = room.sandstormLastUsed[player] || 0;
-    const movesSinceLastUse = room.totalMoves - lastUsed;
-    if(lastUsed > 0 && movesSinceLastUse < COOLDOWN_SANDSTORM){
-      return {error:`飞沙走石冷却中，还需 ${COOLDOWN_SANDSTORM - movesSinceLastUse} 回合`};
-    }
-    room.sandstormLastUsed[player] = room.totalMoves; // 记录使用回合
-    room.pendingSkill={type:'sandstorm',player,r,c};
-    broadcastAll(room,{type:'skillPending',skill:'sandstorm',player,r,c});
-    room.pendingTimer=setTimeout(()=>{if(room.pendingSkill&&room.pendingSkill.type==='sandstorm')resolveSandstorm(room);},PENDING_TIMER_MS);
-    return {ok:true,action:'skill',skill:'sandstorm',pending:true,player};
-  }
-
-  if(sid==='swapPos'){
-    const {myR,myC,opR,opC}=msg;
-    if(myR<0||myR>=N||myC<0||myC>=N||opR<0||opR>=N||opC<0||opC>=N) return {error:'无效位置'};
-    if(room.board[myR][myC]!==player) return {error:'起始位置必须是己方棋子'};
-    if(!room.roles.includes(room.board[opR][opC])||room.board[opR][opC]===player) return {error:'目标位置必须是对手棋子'};
-    if(isImpervious(room,opR,opC)) return {error:'该棋子受无懈可击保护'};
-    // Check cooldown
-    const ss = room.skillState[player] || {};
-    if(ss.swapPos > 0) return {error:`移形换影冷却中，还需${ss.swapPos}回合`};
-    // Swap positions
-    const opStone = room.board[opR][opC];
-    room.board[myR][myC] = opStone;
-    room.board[opR][opC] = player;
-    // Swap stoneAge
-    const tmpAge = room.stoneAge[myR][myC];
-    room.stoneAge[myR][myC] = room.stoneAge[opR][opC];
-    room.stoneAge[opR][opC] = tmpAge;
-    // Swap swapMap if exists
-    const myKey = `${myR},${myC}`;
-    const opKey = `${opR},${opC}`;
-    const mySwap = room.swapMap[myKey];
-    const opSwap = room.swapMap[opKey];
-    if(mySwap) delete room.swapMap[myKey]; else delete room.swapMap[myKey];
-    if(opSwap) delete room.swapMap[opKey]; else delete room.swapMap[opKey];
-    // Swap ambush hidden if exists
-    const myAmbush = room.ambushHidden[myKey];
-    const opAmbush = room.ambushHidden[opKey];
-    delete room.ambushHidden[myKey];
-    delete room.ambushHidden[opKey];
-    if(myAmbush) room.ambushHidden[opKey] = myAmbush;
-    if(opAmbush) room.ambushHidden[myKey] = opAmbush;
-    ss.swapPos = COOLDOWN_SWAPPOS; // cooldown
-    room.skillState[player] = ss;
-    room.pendingSkill = {type:'swapPos',player,myR,myC,opR,opC};
-    broadcastAll(room,{type:'skillPending',skill:'swapPos',player,myR,myC,opR,opC});
-    room.pendingTimer=setTimeout(()=>{if(room.pendingSkill&&room.pendingSkill.type==='swapPos')resolveSwapPos(room);},PENDING_TIMER_MS);
-    return {ok:true,action:'skill',skill:'swapPos',pending:true,player,myR,myC,opR,opC};
-  }
-
-  if(sid==='mountain'){
-    if(room.totalMoves<=MOUNTAIN_MIN_TURN) return {error:`回合数不足${MOUNTAIN_MIN_TURN}`};
-    if(room.gameMode==='blood'){
-      // Blood mode: 力拔山兮 gives bonus points instead of instant win
-      room.bloodScores[player] = (room.bloodScores[player]||0) + BLOOD_MOUNTAIN_SCORE;
-      room.scores[player]=(room.scores[player]||0)+1;
-      const reachedTarget = checkBloodWin(room, player);
-      if(reachedTarget) room.gameOver=true;
-      room.totalMoves++;postMove(room);if(!room.gameOver)advanceTurn(room);
-      return {ok:true,action:'skill',skill:'mountain',player,bloodMode:true,bloodScore:room.bloodScores[player],gameOver:room.gameOver,snapshot:snap(room)};
-    }
-    room.gameOver=true;room.winCells=[];room.scores[player]=(room.scores[player]||0)+1;
-    return {ok:true,action:'skill',skill:'mountain',winner:player,snapshot:snap(room)};
-  }
-
-  if(sid==='swap'){
-    const {r,c}=msg;
-    if(r<0||r>=N||c<0||c>=N) return {error:'无效位置'};
-    const target = room.board[r][c];
-    if(!room.roles.includes(target) || target===player) return {error:'只能对敌方棋子使用'};
-    if(isImpervious(room,r,c)) return {error:'该棋子受无懈可击保护'};
-    // Convert to player's stone for 3 turns
-    room.swapMap[`${r},${c}`] = {owner: target, turnsLeft: SWAP_DURATION};
-    room.board[r][c] = player;
-    room.stoneAge[r][c] = 0;
-    room.pendingSkill = {type:'swap',player,r,c,from:target};
-    broadcastAll(room,{type:'skillPending',skill:'swap',player,r,c});
-    room.pendingTimer=setTimeout(()=>{if(room.pendingSkill&&room.pendingSkill.type==='swap')resolveSwap(room);},PENDING_TIMER_MS);
-    return {ok:true,action:'skill',skill:'swap',pending:true,player,r,c,from:target,to:player};
-  }
-
-  if(sid==='move'){
-    const {fr,fc,tr,tc}=msg; // from and to
-    if(fr<0||fr>=N||fc<0||fc>=N||tr<0||tr>=N||tc<0||tc>=N) return {error:'无效位置'};
-    if(!room.roles.includes(room.board[fr][fc])) return {error:'起始位置无棋子'};
-    if(room.board[tr][tc]!==EMPTY) return {error:'目标位置必须为空'};
-    if(isImpervious(room,fr,fc)) return {error:'该棋子受无懈可击保护'};
-    // Check cooldown
-    const ss = room.skillState[player] || {};
-    if(ss.move > 0) return {error:`斗转星移冷却中，还需${ss.move}回合`};
-    // Move stone
-    room.board[tr][tc] = room.board[fr][fc];
-    room.stoneAge[tr][tc] = room.stoneAge[fr][fc];
-    room.board[fr][fc] = EMPTY;
-    room.stoneAge[fr][fc] = 0;
-    // Transfer swap tracking if exists
-    const swapKey = `${fr},${fc}`;
-    if(room.swapMap[swapKey]){
-      room.swapMap[`${tr},${tc}`] = room.swapMap[swapKey];
-      delete room.swapMap[swapKey];
-    }
-    ss.move = COOLDOWN_MOVE; // cooldown
-    room.skillState[player] = ss;
-    room.totalMoves++;postMove(room);advanceTurn(room);
-    return {ok:true,action:'skill',skill:'move',player,fr,fc,tr,tc,snapshot:snap(room)};
-  }
-
-  if(sid==='ambush'){
-    // 暗度陈仓：全局只能使用一次
-    if(room.ambushUsed.has(player)){
-      return {error:'暗度陈仓全局只能使用一次，你已经用过了'};
-    }
-    room.ambushUsed.add(player); // 标记已使用
-    // Phase 1: place a fake stone (next place will be fake, then real)
-    room.ambushState = {player, phase:'fake', fakePos:null, realPos:null};
-    console.log(`[暗度陈仓] 玩家${player} 启动技能，phase=fake（全局只能用一次）`);
-    return {ok:true,action:'skill',skill:'ambush',phase:'fake',player,snapshot:snap(room)};
-  }
-
-  return {error:'未知技能'};
+  // 走插件化注册表分派
+  return skillRegistry.dispatch(sid, {
+    room, msg, player,
+    deps: {
+      // 棋盘 & 常量
+      N, EMPTY, PENDING_TIMER_MS,
+      // 纯函数
+      findLines, isImpervious, postMove, advanceTurn, snap, checkBloodWin,
+      // pending 结算回调（隶属 server.js 内部，需要回调访问 broadcastAll/room.pendingTimer）
+      resolveSandstorm, resolveSwap, resolveSwapPos,
+      // 网络层注入
+      broadcastAll,
+    },
+  });
 }
 
 // Handle ambush fake placement
