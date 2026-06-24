@@ -21,6 +21,8 @@
 .
 ├── server.js              # HTTP 静态服务 + WebSocket 主入口 + 规则引擎
 ├── ai-engine.js           # AI 决策引擎（简单 / 中等 / 困难）
+├── ai-worker.js           # AI worker_threads 入口（在独立线程运行决策）
+├── ai-pool.js             # AI worker 池（主线程异步调用接口）
 ├── validate.js            # WS 入参 schema 校验 + 令牌桶限流
 ├── config/
 │   └── rules.js           # 集中管理所有规则常量（冷却 / 阈值 / 网络参数等）

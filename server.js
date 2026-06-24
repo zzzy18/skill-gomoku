@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const WebSocket = require('ws');
-const { getAIMove, aiAmbush } = require('./ai-engine');
+const { getAIMove, aiAmbush } = require('./ai-pool');
 const { validateMessage, createRateLimiter } = require('./validate');
 const CONFIG = require('./config/rules');
 
@@ -150,11 +150,13 @@ function scheduleAIMove(roomId, difficulty, delayMs) {
     const aiRole = room.roles[aiIdx];
     if (room.currentPlayer !== aiRole) return;
     if (room.pendingSkill || room.ambushState) return;
-    executeAIMove(roomId, difficulty);
+    executeAIMove(roomId, difficulty).catch(err => {
+      console.error('[AI] executeAIMove error:', err);
+    });
   }, delay);
 }
 
-function executeAIMove(roomId, difficulty) {
+async function executeAIMove(roomId, difficulty) {
   const room = rooms.get(roomId);
   if (!room || room.gameOver) return;
   const aiIdx = room.players.findIndex(p => p && p._isAI);
@@ -165,7 +167,7 @@ function executeAIMove(roomId, difficulty) {
   // 暗度陈仓假棋子阶段：用AI引擎算假位置
   if (room.ambushState && room.ambushState.player === aiRole && room.ambushState.phase === 'fake') {
     const humanRole = room.roles.find(r => r !== aiRole);
-    const ambushPlan = aiAmbush(room, aiRole, humanRole);
+    const ambushPlan = await aiAmbush(room, aiRole, humanRole);
     const fakePos = ambushPlan ? ambushPlan.fakePos : [7, 7]; // fallback center
     if (handleAmbushFake(room, fakePos[0], fakePos[1], aiRole)) {
       return; // 假棋子已落，等真棋子阶段
@@ -182,7 +184,7 @@ function executeAIMove(roomId, difficulty) {
   // 暗度陈仓真棋子阶段：用AI引擎算真位置
   if (room.ambushState && room.ambushState.player === aiRole && room.ambushState.phase === 'real') {
     const humanRole = room.roles.find(r => r !== aiRole);
-    const ambushPlan = aiAmbush(room, aiRole, humanRole);
+    const ambushPlan = await aiAmbush(room, aiRole, humanRole);
     const realPos = ambushPlan ? ambushPlan.realPos : null;
     // 真位置必须不同于假位置且为空
     if (realPos && room.board[realPos[0]][realPos[1]] === EMPTY) {
@@ -201,10 +203,10 @@ function executeAIMove(roomId, difficulty) {
     return;
   }
 
-  const decision = getAIMove(room, difficulty);
+  const decision = await getAIMove(room, difficulty);
 
   if (decision.action === 'skill') {
-    handleAISkill(room, aiRole, decision, roomId, difficulty);
+    await handleAISkill(room, aiRole, decision, roomId, difficulty);
   } else {
     handleAIPlace(room, aiRole, decision, roomId, difficulty);
   }
@@ -279,7 +281,7 @@ function handleAIPlace(room, aiRole, decision, roomId, difficulty) {
   broadcastAISnapshots(room, result);
 }
 
-function handleAISkill(room, aiRole, decision, roomId, difficulty) {
+async function handleAISkill(room, aiRole, decision, roomId, difficulty) {
   const msg = { type: 'useSkill', skill: decision.skill };
 
   switch (decision.skill) {
@@ -313,7 +315,7 @@ function handleAISkill(room, aiRole, decision, roomId, difficulty) {
   const result = handleSkill(room, msg, aiRole);
   if (result.error) {
     // 技能使用失败，改为落子
-    const fallback = getAIMove(room, difficulty);
+    const fallback = await getAIMove(room, difficulty);
     if (fallback.action === 'place') {
       handleAIPlace(room, aiRole, fallback, roomId, difficulty);
     }
