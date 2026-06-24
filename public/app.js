@@ -238,7 +238,16 @@ function handleMsg(m){
         const prev=snap?snap.board:null;snap=m.snapshot;
         if(prev)detectChanges(prev,snap.board);
         if(m.devoured&&m.devoured.length){notify(`吞噬！${m.devoured.length}子转化`,'info');addSystemChat(`吞噬！${m.devoured.length}子被转化`);}
-        if(m.destroyed){notify(`超新星！${m.destroyed.length}子湮灭`,'info');addSystemChat(`超新星爆发！${m.destroyed.length}子湮灭`);}
+        if(m.destroyed){
+          const spawnedN = (m.spawned||[]).length;
+          if(spawnedN>0){
+            notify(`超新星！${m.destroyed.length}子湮灭 + 余烬 ${spawnedN} 子`,'info');
+            addSystemChat(`超新星爆发！${m.destroyed.length}子湮灭，余烬凝聚出 ${spawnedN} 颗己方棋子`);
+          } else {
+            notify(`超新星！${m.destroyed.length}子湮灭`,'info');
+            addSystemChat(`超新星爆发！${m.destroyed.length}子湮灭`);
+          }
+        }
         if(m.skill==='mountain'&&m.winner){notify(`${names[m.winner]||'?'}力拔山兮！`,'info');addSystemChat(`${names[m.winner]||'?'} 使用了「力拔山兮」，直接获胜！`);}
         if(m.skill==='swap'&&m.player){addSystemChat(`${names[m.player]||'?'} 使用了「偷梁换柱」，将 (${m.r+1},${m.c+1}) 变为己方3回合`);}
         if(m.skill==='swapPos'&&m.player){addSystemChat(`${names[m.player]||'?'} 使用了「移形换影」，交换了棋子位置`);}
@@ -474,7 +483,7 @@ function buildRoomUI(m){
   // Settings
   html+=`<div class="settings-section"><h3>全局法则 (创建者可调整)</h3>`;
   const sLabels={devour:'吞噬',decay:'衰变',nova:'超新星',rift:'裂隙',gravity:'引力'};
-  const sDescs={devour:'三面被围即转化',decay:'12手后化为废墟',nova:'四连珠可引爆清场',rift:'每5手随机封锁',gravity:'落子点旁裂隙被三面围则坍缩为废墟'};
+  const sDescs={devour:'三面被围即转化',decay:'12手后化为废墟',nova:'四连珠可引爆，清场后凝聚2颗己方棋子',rift:'每5手随机封锁',gravity:'落子点旁裂隙被三面围则坍缩为废墟'};
   for(const [k,v] of Object.entries(m.settings)){
     // 血战模式禁用超新星
     const disabledKey=(k==='nova'&&bloodMode);
@@ -641,7 +650,7 @@ function buildSidePanel(){
   // Global rules
   html+=`<div class="card"><h3>全局法则</h3>`;
   const gL={devour:'吞噬',decay:'衰变',nova:'超新星',rift:'裂隙',gravity:'引力'};
-  const gD={devour:'三面被围即转化',decay:'12手后化为废墟',nova:'四连珠可引爆',rift:'每5手随机封锁',gravity:'裂隙坍缩为废墟'};
+  const gD={devour:'三面被围即转化',decay:'12手后化为废墟',nova:'四连可引爆+凝聚2子',rift:'每5手随机封锁',gravity:'裂隙坍缩为废墟'};
   const isBloodGame=s.gameMode==='blood';
   for(const [k,v] of Object.entries(s.globalSettings)){
     if(k==='nova'&&isBloodGame) continue; // blood mode hides nova

@@ -20,6 +20,9 @@ module.exports = {
     },
     mountainMinTurn: 50,// 力拔山兮可用的最低回合数
 
+    // 超新星法则：引爆后在棋盘空位随机生成多少颗"余烬"己方棋子
+    novaSpawnCount: 2,
+
     blood: {
       fiveCount: 5,     // 血战模式：累计五连次数胜利门槛
       scoreToWin: 20,   // 血战模式：累计血战分胜利门槛

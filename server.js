@@ -70,6 +70,7 @@ const MOUNTAIN_MIN_TURN = CONFIG.rules.mountainMinTurn;
 const BLOOD_FIVE_COUNT = CONFIG.rules.blood.fiveCount;
 const BLOOD_SCORE_TO_WIN = CONFIG.rules.blood.scoreToWin;
 const BLOOD_MOUNTAIN_SCORE = CONFIG.rules.blood.mountainScore;
+const NOVA_SPAWN_COUNT = CONFIG.rules.novaSpawnCount;
 const COOLDOWN_SANDSTORM = CONFIG.skills.sandstorm.cooldown;
 const COOLDOWN_SWAPPOS = CONFIG.skills.swapPos.cooldown;
 const COOLDOWN_MOVE = CONFIG.skills.move.cooldown;
@@ -550,11 +551,25 @@ function handleSupernova(room, player) {
         destroyed.push([nr,nc,room.board[nr][nc]]);
         room.board[nr][nc]=EMPTY;room.stoneAge[nr][nc]=0;
         delete room.swapMap[`${nr},${nc}`];
+        delete room.ambushHidden[`${nr},${nc}`];
       }
     }
   }
+  // 超新星余烬：在棋盘空位中随机生成 N 颗己方棋子（作为引爆补偿）
+  const empties=[];
+  for(let r=0;r<N;r++) for(let c=0;c<N;c++){
+    if(room.board[r][c]===EMPTY && !room.ambushHidden[`${r},${c}`]) empties.push([r,c]);
+  }
+  const spawned=[];
+  for(let i=0;i<NOVA_SPAWN_COUNT && empties.length>0;i++){
+    const idx=Math.floor(Math.random()*empties.length);
+    const [sr,sc]=empties.splice(idx,1)[0];
+    room.board[sr][sc]=player;
+    room.stoneAge[sr][sc]=0;
+    spawned.push([sr,sc]);
+  }
   room.novaLine=null;room.totalMoves++;postMove(room);advanceTurn(room);
-  return {ok:true,destroyed,action:'supernova',snapshot:snap(room)};
+  return {ok:true,destroyed,spawned,action:'supernova',snapshot:snap(room)};
 }
 
 function handleDismissNova(room, player) {
