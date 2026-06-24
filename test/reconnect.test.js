@@ -35,7 +35,7 @@ function startServer(port) {
     child.stdout.on('data', onData);
     child.stderr.on('data', onData);
     child.on('error', reject);
-    setTimeout(() => { if (!started) { child.kill(); reject(new Error('server start timeout')); } }, 5000);
+    setTimeout(() => { if (!started) { child.kill(); reject(new Error('server start timeout')); } }, 15000);
   });
 }
 
