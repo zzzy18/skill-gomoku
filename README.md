@@ -19,11 +19,20 @@
 
 ```
 .
-├── server.js              # HTTP 静态服务 + WebSocket 主入口 + 规则引擎
+├── server.js              # HTTP 静态服务 + WebSocket 主入口 + 房间路由
 ├── ai-engine.js           # AI 决策引擎（简单 / 中等 / 困难）
 ├── ai-worker.js           # AI worker_threads 入口（在独立线程运行决策）
 ├── ai-pool.js             # AI worker 池（主线程异步调用接口）
 ├── validate.js            # WS 入参 schema 校验 + 令牌桶限流
+├── src/
+│   ├── constants.js       # 棋盘 / 角色 ID 常量
+│   ├── skills/all.js      # 八大技能定义表
+│   ├── state/room.js      # createRoom / resetRoom / initSkillState
+│   └── rules/
+│       ├── board.js       # findLines / 吞噬 / 衰变 / 裂隙 / 废墟 / 推进
+│       ├── blood.js       # 血战清场 + 胜利判定
+│       ├── snapshot.js    # snap / personalSnap（含 ambush 视角隔离）
+│       └── undo.js        # 悔棋请求 / 响应 / 撤销
 ├── config/
 │   └── rules.js           # 集中管理所有规则常量（冷却 / 阈值 / 网络参数等）
 ├── public/

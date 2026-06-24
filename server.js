@@ -79,16 +79,16 @@ const NAME_MAX_LEN = CONFIG.limits.nameMaxLen;
 const CHAT_MAX_LEN = CONFIG.limits.chatMaxLen;
 
 // All available skills
-const ALL_SKILLS = [
-  {id:'sandstorm',   name:'飞沙走石', type:'active',  desc:'移除棋盘上一枚棋子并留下废墟，每5回合可用一次'},
-  {id:'swapPos',    name:'移形换影', type:'active',  desc:'选择己方一枚棋子与对手一枚棋子交换位置，冷却4回合'},
-  {id:'intercept',   name:'擒拿',     type:'passive', desc:'当飞沙走石、偷梁换柱、移形换影发动时可打断其效果'},
-  {id:'mountain',    name:'力拔山兮', type:'active',  desc:'回合≥50时直接获胜'},
-  {id:'swap',        name:'偷梁换柱', type:'active',  desc:'将一枚棋子变为己方3回合，期间不计胜利'},
-  {id:'move',        name:'斗转星移', type:'active',  desc:'移动任意一颗棋子到空位，冷却5回合'},
-  {id:'impervious',  name:'无懈可击', type:'passive', desc:'己方棋子无法被技能选中'},
-  {id:'ambush',      name:'暗度陈仓', type:'active',  desc:'连下2子：第1子为假(对手可见但不计胜利)，第2子为真(对手不可见)，全局只能用一次'},
-];
+const { ALL_SKILLS } = require('./src/skills/all');
+const {
+  findLines, applyDevour,
+  applyDecay, spawnRifts, ageRifts, ageRuins, processSwaps,
+  postMove, advanceTurn, isImpervious,
+} = require('./src/rules/board');
+const { bloodClear, checkBloodWin } = require('./src/rules/blood');
+const { snap, personalSnap } = require('./src/rules/snapshot');
+const { undoLastMove, handleUndoRequest, handleUndoResponse } = require('./src/rules/undo');
+const { createRoom, initSkillState, resetRoom } = require('./src/state/room');
 
 const rooms = new Map();
 const playerRoom = new Map();
@@ -372,63 +372,7 @@ function broadcastAISnapshots(room, result) {
   }
 }
 
-function createRoom(id, mode, names, gameMode) {
-  const count = mode === 3 ? 3 : 2;
-  const players = new Array(count).fill(null);
-  const roles = count === 3 ? [P1, P2, P3] : [P1, P2];
-  const isBlood = gameMode === 'blood';
-  return {
-    id, mode, count, players, roles, names,
-    gameMode: gameMode || 'classic',
-    targetScore: isBlood ? 5 : 0,
-    bloodScores: {},
-    board: Array.from({length:N},()=>Array(N).fill(EMPTY)),
-    stoneAge: Array.from({length:N},()=>Array(N).fill(0)),
-    riftAge: Array.from({length:N},()=>Array(N).fill(0)),
-    ruinAge: Array.from({length:N},()=>Array(N).fill(0)),
-    // swap tracking: board stores original owner temporarily
-    swapMap: {}, // "r,c" -> {owner, turnsLeft}
-    // ambush hidden stones: 真棋子对其他玩家隐藏
-    ambushHidden: {}, // "r,c" -> player (真棋子位置，只有该玩家可见)
-    currentPlayer: P1,
-    totalMoves: 0,
-    history: [],
-    gameOver: false,
-    winCells: [],
-    novaLine: null,
-    scores: {},
-    ready: new Array(count).fill(false),
-    gameStarted: false,
-    globalSettings: {devour:true,decay:true,nova:true,rift:true},
-    // Player skill state
-    equipped: {}, // role -> [skillId, skillId] (chosen at start)
-    skillState: {}, // role -> {id: cooldown/used/etc}
-    skipNext: new Set(),
-    pendingSkill: null,
-    pendingTimer: null,
-    // Ambush state
-    ambushState: null, // {player, phase:'fake'|'real'}
-    // Skill usage limits
-    ambushUsed: new Set(), // roles who have used ambush (全局只能用一次)
-    sandstormLastUsed: {}, // role -> lastUsedMove (飞沙走石上次使用的回合数)
-    // Undo request state
-    undoRequest: null, // {from: role} - 悔棋请求
-    // 断线重连支持
-    playerTokens: new Array(count).fill(null),       // 每个座位的 sessionToken
-    pendingDisconnect: new Array(count).fill(null),  // 每个座位的 {timer, role}（断线宽限期）
-    lastActivity: Date.now()
-  };
-}
-
-function initSkillState(room) {
-  for (const role of room.roles) {
-    room.skillState[role] = {};
-    const equipped = room.equipped[role] || [];
-    for (const sid of equipped) {
-      room.skillState[role][sid] = sid === 'move' ? 0 : 0; // move has cooldown, start at 0
-    }
-  }
-}
+// （createRoom / initSkillState 已迁移至 src/state/room.js）
 
 // 使用 crypto 随机生成不可猜测的房间 ID（仅大写字母与数字，去除易混字符 0/O/1/I）
 // 字符集 32 个，5 位 ≈ 33M 组合；冲突极小，但仍保留最大重试以防极端情况
@@ -468,312 +412,12 @@ function broadcastExcept(room, msg, excludeWs) {
   for (const p of room.players) if (p && p !== excludeWs && p.readyState === 1) p.send(data);
 }
 
-function snap(room) {
-  // For ambush: hide real stone from non-ambush players
-  const board = room.board.map(row => [...row]);
-  const ambush = room.ambushState;
+// （snap / personalSnap 已迁移至 src/rules/snapshot.js）
 
-  // 从 ambushHidden 中找出假棋子位置
-  const fakePositions = [];
-  for (const key of Object.keys(room.ambushHidden)) {
-    if (key.startsWith('fake_')) {
-      const parts = key.split('_');
-      fakePositions.push([parseInt(parts[1]), parseInt(parts[2]), room.ambushHidden[key]]);
-    }
-  }
+// （悔棋相关函数 undoLastMove / handleUndoRequest / handleUndoResponse 已迁移至 src/rules/undo.js）
 
-  return {
-    board,
-    stoneAge: room.stoneAge,
-    riftAge: room.riftAge,
-    ruinAge: room.ruinAge,
-    currentPlayer: room.currentPlayer,
-    totalMoves: room.totalMoves,
-    gameOver: room.gameOver,
-    winCells: room.winCells,
-    novaLine: room.novaLine,
-    scores: room.scores,
-    skipNext: [...room.skipNext],
-    globalSettings: room.globalSettings,
-    pendingSkill: room.pendingSkill ? {
-      type: room.pendingSkill.type,
-      player: room.pendingSkill.player,
-      r: room.pendingSkill.r,
-      c: room.pendingSkill.c,
-      myR: room.pendingSkill.myR,
-      myC: room.pendingSkill.myC,
-      opR: room.pendingSkill.opR,
-      opC: room.pendingSkill.opC
-    } : null,
-    equipped: room.equipped,
-    skillState: room.skillState,
-    sandstormLastUsed: room.sandstormLastUsed,
-    gameMode: room.gameMode,
-    bloodWinCondition: { fiveCount: BLOOD_FIVE_COUNT, bloodScore: BLOOD_SCORE_TO_WIN }, // 血战胜利条件
-    targetScore: room.targetScore,
-    bloodScores: room.bloodScores,
-    ambushPhase: ambush ? ambush.phase : null,
-    ambushPlayer: ambush ? ambush.player : null,
-    ambushFakePos: ambush ? ambush.fakePos : null, // 当前进行中的假棋子
-    ambushRealPos: ambush ? ambush.realPos : null, // 当前进行中的真棋子
-    ambushHidden: room.ambushHidden, // 暗度陈仓真棋子（已完成）
-    ambushFakePositions: fakePositions, // 已完成的假棋子位置列表
-    swapMap: room.swapMap
-  };
-}
-
-// Personalized snapshot: hide ambush real stone from others
-function personalSnap(room, role) {
-  const s = snap(room);
-  // 隐藏暗度陈仓的真棋子（其他玩家看不到）
-  // 注意：只处理 "r,c" 格式的 key（真棋子），跳过 "fake_r_c" 格式（假棋子）
-  for (const key of Object.keys(room.ambushHidden)) {
-    // 跳过假棋子记录
-    if (key.startsWith('fake_')) continue;
-    
-    const hiddenOwner = room.ambushHidden[key];
-    if (hiddenOwner !== role) {
-      const [hr, hc] = key.split(',').map(Number);
-      if (hr >= 0 && hr < N && hc >= 0 && hc < N) {
-        s.board[hr][hc] = EMPTY;
-      }
-    }
-  }
-  // ambushState 正在进行时，隐藏真棋子
-  if (room.ambushState && room.ambushState.phase === 'real' && room.ambushState.player !== role) {
-    if (room.ambushState.realPos) {
-      const [rr, rc] = room.ambushState.realPos;
-      s.board[rr][rc] = EMPTY;
-    }
-  }
-  return s;
-}
-
-function advanceTurn(room) {
-  let idx = room.roles.indexOf(room.currentPlayer);
-  for (let i = 0; i < room.count; i++) {
-    idx = (idx + 1) % room.count;
-    const next = room.roles[idx];
-    if (room.skipNext.has(next)) { room.skipNext.delete(next); continue; }
-    room.currentPlayer = next;
-    return;
-  }
-  room.currentPlayer = room.roles[0];
-}
-
-function findLines(board, r, c, player, length, excludePos = null) {
-  // excludePos: 排除的位置（假棋子），在检测时被视为 EMPTY
-  const dirs=[[0,1],[1,0],[1,1],[1,-1]], results=[];
-  for (const [dr,dc] of dirs) {
-    let cells=[[r,c]];
-    // 检查 cells 中的位置是否被排除
-    const isExcluded = (nr, nc) => excludePos && excludePos[0] === nr && excludePos[1] === nc;
-    
-    for(let i=1;i<length;i++){
-      const nr=r+dr*i,nc=c+dc*i;
-      if(nr<0||nr>=N||nc<0||nc>=N)break;
-      if(isExcluded(nr,nc))break; // 排除假棋子
-      if(board[nr][nc]!==player)break;
-      cells.push([nr,nc]);
-    }
-    for(let i=1;i<length;i++){
-      const nr=r-dr*i,nc=c-dc*i;
-      if(nr<0||nr>=N||nc<0||nc>=N)break;
-      if(isExcluded(nr,nc))break; // 排除假棋子
-      if(board[nr][nc]!==player)break;
-      cells.unshift([nr,nc]);
-    }
-    if(cells.length>=length) results.push(cells.slice(0,length));
-  }
-  return results;
-}
-
-function applyDevour(room, r, c, player) {
-  const enemies = room.roles.filter(p => p !== player);
-  const dirs = [[0,1],[0,-1],[1,0],[-1,0]];
-  const allDevoured = [];
-  for (let chain = 0; chain < 3; chain++) {
-    const toDevour = [];
-    const sources = chain === 0 ? [[r,c]] : allDevoured.slice(-5);
-    const checked = new Set();
-    for (const [sr,sc] of sources) {
-      for (const [dr,dc] of dirs) {
-        const nr=sr+dr,nc=sc+dc;
-        if(nr<0||nr>=N||nc<0||nc>=N)continue;
-        const cell=room.board[nr][nc];
-        if(!enemies.includes(cell))continue;
-        const key=nr*N+nc;
-        if(checked.has(key))continue;
-        checked.add(key);
-        let surr=0;
-        for(const [dr2,dc2] of dirs){const ar=nr+dr2,ac=nc+dc2;if(ar<0||ar>=N||ac<0||ac>=N)continue;if(room.board[ar][ac]===player)surr++;}
-        if(surr>=3) toDevour.push([nr,nc,cell]);
-      }
-    }
-    if(toDevour.length===0)break;
-    for(const [dr,dc] of toDevour){room.board[dr][dc]=player;room.stoneAge[dr][dc]=0;allDevoured.push([dr,dc]);}
-  }
-  return allDevoured;
-}
-
-// 悔棋功能：撤销上一手棋
-function undoLastMove(room) {
-  if(room.history.length === 0) return {error:'没有可悔棋的历史'};
-  if(room.gameOver) return {error:'游戏已结束，无法悔棋'};
-  if(room.ambushState) return {error:'暗度陈仓进行中，无法悔棋'};
-  if(room.pendingSkill) return {error:'技能结算中，无法悔棋'};
-
-  // 获取最后一手
-  const lastMove = room.history.pop();
-  if(!lastMove) return {error:'历史记录为空'};
-
-  // 撤销棋子
-  const {r, c, player, type} = lastMove;
-  if(type === 'place'){
-    // 检查是否是暗度陈仓的真棋子（需要同时清除假棋子）
-    const ambushKey = `${r},${c}`;
-    if(room.ambushHidden[ambushKey] === player){
-      // 清除真棋子记录
-      delete room.ambushHidden[ambushKey];
-      // 找并清除假棋子
-      for(const key of Object.keys(room.ambushHidden)){
-        if(key.startsWith('fake_') && room.ambushHidden[key] === player){
-          const parts = key.split('_');
-          const fr = parseInt(parts[1]), fc = parseInt(parts[2]);
-          room.board[fr][fc] = EMPTY;
-          room.stoneAge[fr][fc] = 0;
-          delete room.ambushHidden[key];
-        }
-      }
-    }
-    // 清除棋子
-    room.board[r][c] = EMPTY;
-    room.stoneAge[r][c] = 0;
-    // 回退回合
-    room.totalMoves--;
-    // 悔棋后回合回到悔棋的玩家（让他重新落子）
-    room.currentPlayer = player;
-    // 清除胜利状态
-    room.winCells = [];
-    room.novaLine = null;
-    console.log(`[悔棋] 玩家${player} 撤销 (${r},${c})，回合回到 ${room.currentPlayer}`);
-    return {ok:true, undone:{r,c,player}, snapshot:snap(room)};
-  }
-  return {error:'无法撤销该类型操作'};
-}
-
-// 处理悔棋请求
-function handleUndoRequest(room, player) {
-  if(room.gameOver) return {error:'游戏已结束'};
-  if(room.ambushState) return {error:'暗度陈仓进行中'};
-  if(room.pendingSkill) return {error:'技能结算中'};
-  if(room.history.length === 0) return {error:'没有可悔棋的历史'};
-  if(room.undoRequest) return {error:'已有悔棋请求待处理'};
-  // 只有刚落子的玩家（当前回合的前一个玩家）才能请求悔棋
-  const roles = room.roles;
-  const idx = roles.indexOf(room.currentPlayer);
-  const prevPlayer = roles[(idx - 1 + room.count) % room.count];
-  if(player !== prevPlayer) return {error:'只有刚落子的玩家才能请求悔棋'};
-
-  room.undoRequest = {from: player};
-  console.log(`[悔棋请求] 玩家${player} 请求悔棋`);
-  return {ok:true, undoRequest: true, from: player};
-}
-
-// 处理悔棋响应
-function handleUndoResponse(room, player, accepted) {
-  if(!room.undoRequest) return {error:'没有悔棋请求'};
-  if(room.undoRequest.from === player) return {error:'不能响应自己的悔棋请求'};
-  room.undoRequest = null;
-  if(accepted){
-    const result = undoLastMove(room);
-    if(result.error) return result;
-    console.log(`[悔棋] 玩家${player} 同意悔棋`);
-    return {ok:true, undoAccepted: true, ...result};
-  }else{
-    console.log(`[悔棋] 玩家${player} 拒绝悔棋`);
-    return {ok:true, undoRejected: true};
-  }
-}
-
-function applyDecay(room) {
-  let d=0;
-  for(let r=0;r<N;r++) for(let c=0;c<N;c++){
-    if(room.roles.includes(room.board[r][c])){
-      room.stoneAge[r][c]++;
-      if(room.stoneAge[r][c]>=DECAY_TURNS){room.board[r][c]=RUIN;room.stoneAge[r][c]=0;room.ruinAge[r][c]=0;d++;}
-    }
-  }
-  return d;
-}
-
-function spawnRifts(room) {
-  const count=Math.random()>0.5?2:1;
-  const empty=[];
-  for(let r=0;r<N;r++) for(let c=0;c<N;c++) if(room.board[r][c]===EMPTY) empty.push([r,c]);
-  for(let i=empty.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[empty[i],empty[j]]=[empty[j],empty[i]];}
-  let s=0;
-  for(let i=0;i<Math.min(count,empty.length);i++){const [r,c]=empty[i];room.board[r][c]=RIFT;room.riftAge[r][c]=0;s++;}
-  return s;
-}
-
-function ageRifts(room) {
-  for(let r=0;r<N;r++) for(let c=0;c<N;c++){
-    if(room.board[r][c]===RIFT){room.riftAge[r][c]++;if(room.riftAge[r][c]>=RIFT_DURATION){room.board[r][c]=EMPTY;room.riftAge[r][c]=0;}}
-  }
-}
-
-function ageRuins(room) {
-  for(let r=0;r<N;r++) for(let c=0;c<N;c++){
-    if(room.board[r][c]===RUIN){room.ruinAge[r][c]++;if(room.ruinAge[r][c]>=RUIN_DURATION){room.board[r][c]=EMPTY;room.ruinAge[r][c]=0;}}
-  }
-}
-
-// Process swap timer each move
-function processSwaps(room) {
-  const toRevert = [];
-  for (const key of Object.keys(room.swapMap)) {
-    const s = room.swapMap[key];
-    s.turnsLeft--;
-    if (s.turnsLeft <= 0) {
-      const [r,c] = key.split(',').map(Number);
-      room.board[r][c] = s.owner;
-      room.stoneAge[r][c] = 0;
-      toRevert.push(key);
-    }
-  }
-  for (const k of toRevert) delete room.swapMap[k];
-  return toRevert.length;
-}
-
-function postMove(room) {
-  if(room.globalSettings.decay) applyDecay(room);
-  if(room.globalSettings.rift && room.totalMoves>0 && room.totalMoves%RIFT_INTERVAL===0) spawnRifts(room);
-  ageRifts(room);
-  ageRuins(room);
-  processSwaps(room);
-  // Decrement move skill cooldowns
-  for (const role of room.roles) {
-    const ss = room.skillState[role];
-    if (ss) {
-      for (const sid of Object.keys(ss)) {
-        if (sid === 'move' && ss[sid] > 0) ss[sid]--;
-        if (sid === 'swapPos' && ss[sid] > 0) ss[sid]--;
-      }
-    }
-  }
-  let empties=0;
-  for(let i=0;i<N;i++) for(let j=0;j<N;j++) if(room.board[i][j]===EMPTY) empties++;
-  if(empties===0) room.gameOver=true;
-}
-
-// Check if a cell is protected by impervious
-function isImpervious(room, r, c) {
-  const owner = room.board[r][c];
-  if (!room.roles.includes(owner)) return false;
-  const equipped = room.equipped[owner] || [];
-  return equipped.includes('impervious');
-}
+// （applyDecay / spawnRifts / ageRifts / ageRuins / processSwaps / postMove / isImpervious
+//   均已迁移至 src/rules/board.js）
 
 function handlePlace(room, r, c, player) {
   if(room.gameOver) return {error:'游戏已结束'};
@@ -879,52 +523,7 @@ function handlePlace(room, r, c, player) {
 }
 
 // Blood mode: clear cells around five-in-a-row and award score
-function bloodClear(room, winCells, player) {
-  const cleared = [];
-  const clearedSet = new Set();
-  // The five-in-a-row cells themselves stay, but surrounding cells are cleared
-  for (const [wr, wc] of winCells) {
-    for (let dr = -1; dr <= 1; dr++) {
-      for (let dc = -1; dc <= 1; dc++) {
-        const nr = wr + dr, nc = wc + dc;
-        if (nr < 0 || nr >= N || nc < 0 || nc >= N) continue;
-        // Skip the five-in-a-row cells themselves
-        if (winCells.some(([r, c]) => r === nr && c === nc)) continue;
-        const key = nr * N + nc;
-        if (clearedSet.has(key)) continue;
-        if (room.board[nr][nc] === EMPTY) continue;
-        if (room.board[nr][nc] === RIFT) continue;
-        if (isImpervious(room, nr, nc)) continue;
-        clearedSet.add(key);
-        cleared.push([nr, nc, room.board[nr][nc]]);
-        room.board[nr][nc] = EMPTY;
-        room.stoneAge[nr][nc] = 0;
-        delete room.swapMap[`${nr},${nc}`];
-        // Clear ambush hidden records
-        delete room.ambushHidden[`${nr},${nc}`];
-      }
-    }
-  }
-  // Also clear the five-in-a-row cells themselves
-  for (const [wr, wc] of winCells) {
-    room.board[wr][wc] = EMPTY;
-    room.stoneAge[wr][wc] = 0;
-    delete room.swapMap[`${wr},${wc}`];
-    delete room.ambushHidden[`${wr},${wc}`];
-  }
-  const baseScore = 1;
-  const bonusScore = cleared.length * 0.5;
-  const totalScore = baseScore + bonusScore;
-  room.bloodScores[player] = (room.bloodScores[player] || 0) + totalScore;
-  return { cleared, score: totalScore, totalBloodScore: room.bloodScores[player] };
-}
-
-// 检查血战模式胜利条件：五连次数>=5 或 血战分数>=20
-function checkBloodWin(room, player) {
-  const fiveCount = room.scores[player] || 0;
-  const bloodScore = room.bloodScores[player] || 0;
-  return fiveCount >= BLOOD_FIVE_COUNT || bloodScore >= BLOOD_SCORE_TO_WIN;
-}
+// （bloodClear / checkBloodWin 已迁移至 src/rules/blood.js）
 
 function handleSupernova(room, player) {
   if(!room.novaLine||room.gameOver) return {error:'无法引爆'};
@@ -1166,25 +765,7 @@ function handleIntercept(room, player) {
   return {ok:true,action:'intercept',interceptor:player,originalPlayer,interceptedSkill,snapshot:snap(room)};
 }
 
-function resetRoom(room) {
-  room.board=Array.from({length:N},()=>Array(N).fill(EMPTY));
-  room.stoneAge=Array.from({length:N},()=>Array(N).fill(0));
-  room.riftAge=Array.from({length:N},()=>Array(N).fill(0));
-  room.ruinAge=Array.from({length:N},()=>Array(N).fill(0));
-  room.swapMap={};
-  room.ambushHidden={}; // 清空暗度陈仓隐藏棋子
-  room.currentPlayer=P1;room.totalMoves=0;room.history=[];
-  room.gameOver=false;room.winCells=[];room.novaLine=null;
-  room.ready=new Array(room.count).fill(false);
-  room.skipNext=new Set();room.pendingSkill=null;
-  room.ambushState=null;
-  room.ambushUsed=new Set(); // 重置暗度陈仓使用记录
-  room.sandstormLastUsed={}; // 重置飞沙走石使用记录
-  room.bloodScores={}; // 重置血战得分
-  room.undoRequest=null; // 重置悔棋请求
-  if(room.pendingTimer){clearTimeout(room.pendingTimer);room.pendingTimer=null;}
-  initSkillState(room);
-}
+// （resetRoom 已迁移至 src/state/room.js）
 
 // ── WebSocket ──
 wss.on('connection', ws => {
