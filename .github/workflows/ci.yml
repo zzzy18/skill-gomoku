@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Test on Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['18', '20', '22']
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Smoke test (start server & check root + path-traversal)
+        shell: bash
+        run: |
+          PORT=3399 node server.js &
+          PID=$!
+          sleep 2
+          STATUS=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3399/)
+          TRAV=$(curl -s -o /dev/null -w '%{http_code}' 'http://127.0.0.1:3399/../server.js')
+          kill $PID || true
+          echo "root=$STATUS  traversal=$TRAV"
+          test "$STATUS" = "200"
+          test "$TRAV" != "200"

@@ -424,11 +424,19 @@ function initSkillState(room) {
   }
 }
 
+// 使用 crypto 随机生成不可猜测的房间 ID（仅大写字母与数字，去除易混字符 0/O/1/I）
+// 字符集 32 个，5 位 ≈ 33M 组合；冲突极小，但仍保留最大重试以防极端情况
+const ROOM_ID_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 function getRoomId() {
-  const c = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let id;
-  do { id=''; for(let i=0;i<5;i++) id+=c[Math.floor(Math.random()*c.length)]; } while(rooms.has(id));
-  return id;
+  const crypto = require('crypto');
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const bytes = crypto.randomBytes(5);
+    let id = '';
+    for (let i = 0; i < 5; i++) id += ROOM_ID_ALPHABET[bytes[i] & 31]; // 32 个字符，掩码 0x1F
+    if (!rooms.has(id)) return id;
+  }
+  // 兜底：在极端冲突场景下退化为更长的 ID，确保函数始终能返回
+  return 'R' + Date.now().toString(36).toUpperCase();
 }
 
 function playerRole(ws) {
